@@ -66,17 +66,21 @@ export async function scanDeposits(): Promise<{ credited: number; scannedTo: num
   }
   if (from >= safeHead) return { credited: 0, scannedTo: from };
 
-  // Rebuilt each tick — users register between ticks.
-  const byAddress = new Map<string, any>();
-  for (const u of memDb.users) {
-    if (u.public_key) byAddress.set(normalizeAddress(u.public_key), u);
-  }
-
   let credited = 0;
   let chunks = 0;
 
   while (from < safeHead && chunks < MAX_CHUNKS_PER_TICK) {
     const to = Math.min(from + CHUNK, safeHead);
+
+    // Rebuilt per CHUNK, not once per tick. A catch-up scan can run up to 50 chunks across many
+    // seconds of awaited RPC calls, and anyone who registered during that window was absent from
+    // a map built at the top. Their deposit would be filed as unattributed and the cursor would
+    // move past it, so it never self-corrected — it sat there until an admin claimed it by hand.
+    // Rebuilding is O(users) against an in-memory array; the RPC round-trip below dwarfs it.
+    const byAddress = new Map<string, any>();
+    for (const u of memDb.users) {
+      if (u.public_key) byAddress.set(normalizeAddress(u.public_key), u);
+    }
 
     const logs = await publicClient.getContractEvents({
       address: cfg.usdgAddress as Address,

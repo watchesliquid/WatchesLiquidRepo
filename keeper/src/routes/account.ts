@@ -129,20 +129,35 @@ accountRouter.post("/withdraw", async (req: any, res) => {
       return res.status(429).json({ error: limit.reason });
     }
 
-    // Pre-flight the gas BEFORE deducting. Otherwise an empty platform wallet debits the user
-    // and fails the send — a silent dependency Solana never had, since SOL was its own gas.
-    const gas = await getGasBalance(getPlatformAddress());
-    if (gas < MIN_GAS_ETH) {
-      (user as any)._withdrawing = false;
-      console.error(`[withdraw] platform ETH ${gas} below ${MIN_GAS_ETH} — refusing to deduct`);
-      return res.status(503).json({ error: "Withdrawals temporarily unavailable (platform gas)" });
-    }
-
+    // RESERVE THE BALANCE NOW, in the same synchronous block as the check above.
+    //
+    // This used to pre-flight gas first and deduct afterwards, which opened a TOCTOU window: the
+    // `await` below yields the event loop for a full RPC round-trip, and POST /positions/open is
+    // synchronous, so it ran to completion inside that window against a balance this request had
+    // already approved for withdrawal. A user could withdraw their balance on-chain AND open a
+    // position with it, leaving balance_usd negative and the platform short the difference.
+    // `_withdrawing` did not help — it only serialises withdrawals against each other.
+    //
+    // Nothing may await between reading balance_usd and writing it. Node is single-threaded, so
+    // a synchronous check-and-deduct is atomic; an await in the middle is not.
     user.balance_usd = String(Number(user.balance_usd) - amount);
     if (!user.withdrawals) user.withdrawals = [];
     const record: any = { to: normalizeAddress(toAddress), amount, status: "pending", txHash: null, time: new Date().toISOString() };
     user.withdrawals.push(record);
     saveDb();
+
+    // Gas pre-flight. An unfunded platform wallet fails every send, so refuse before broadcasting
+    // — but the balance is already reserved, so release it explicitly on this path.
+    const gas = await getGasBalance(getPlatformAddress());
+    if (gas < MIN_GAS_ETH) {
+      user.balance_usd = String(Number(user.balance_usd) + amount);
+      record.status = "failed";
+      record.error = `platform gas ${gas} below ${MIN_GAS_ETH}`;
+      saveDb();
+      (user as any)._withdrawing = false;
+      console.error(`[withdraw] platform ETH ${gas} below ${MIN_GAS_ETH} — reservation released`);
+      return res.status(503).json({ error: "Withdrawals temporarily unavailable (platform gas)" });
+    }
 
     let result;
     try {
