@@ -1,0 +1,17 @@
+# Normalise to LF in the repo.
+* text=auto
+
+# These are EXECUTED on Linux. If they ever check out with CRLF the shebang becomes
+# "#!/bin/bash\r" and the box answers: bad interpreter: /bin/bash^M
+*.sh    text eol=lf
+*.conf  text eol=lf
+Dockerfile text eol=lf
+
+# Windows-only helpers stay CRLF.
+*.bat   text eol=crlf
+
+# Binary — never touch.
+*.webp  binary
+*.png   binary
+*.jpg   binary
+*.woff2 binary

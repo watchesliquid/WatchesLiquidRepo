@@ -1,0 +1,26 @@
+{
+  "name": "watches-liquid",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "shared",
+    "keeper",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=keeper & npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=frontend && npm run build:keeper",
+    "build:keeper": "esbuild keeper/src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=keeper/dist/server.cjs --external:jsonwebtoken --external:express --external:cors --external:dotenv --external:uuid",
+    "start": "node keeper/dist/server.cjs",
+    "lint": "npm run lint --workspace=shared && npm run lint --workspace=keeper && npm run lint --workspace=frontend",
+    "test:admin": "tsx scripts/admin-check.ts",
+    "test:smoke": "tsx scripts/mainnet-smoke.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.1",
+    "esbuild": "^0.28.1"
+  }
+}

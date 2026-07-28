@@ -1,0 +1,25 @@
+# deps / build
+node_modules/
+.next/
+dist/
+*.tsbuildinfo
+
+# secrets — NEVER commit. keeper/.env holds PLATFORM_WALLET_KEY, which controls all user funds.
+# Patterns without a slash match at ANY depth, so this covers keeper/.env, frontend/.env.local, etc.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+
+# runtime data — user balances, wallet addresses, credited deposit tx ids.
+# This is the live DB (keeper/data/watchperps.json); it must not be in source control.
+data/
+*.sqlite
+*.db
+
+# logs / os
+*.log
+.DS_Store
+Thumbs.db
