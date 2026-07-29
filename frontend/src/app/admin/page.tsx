@@ -233,101 +233,56 @@ function Meter({ used, limit, label }: { used: number; limit: number; label: str
   );
 }
 
-/* ── Users ── */
+/* ── Users — read-only ──
+   The "Set balance" control and its modal are gone with POST /admin/users/:id/balance. A
+   balance edit is not bookkeeping once withdrawals are live; whatever was written there could
+   be withdrawn as real USDG, which made this table a mint. See routes/admin.ts. */
 function Users() {
-  const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["admin-users"], queryFn: () => adminFetch("/users"), refetchInterval: 15_000 });
-  const [editing, setEditing] = useState<any>(null);
 
   if (isLoading) return <div className="adm-skel">Loading…</div>;
 
   return (
-    <>
-      <div className="adm-tablewrap">
-        <table className="adm-table">
-          <thead>
-            <tr><th>Address</th><th>Balance</th><th>Open</th><th>Margin</th><th>Deposits</th><th>Withdrawn 24h</th><th>Total out</th><th></th></tr>
-          </thead>
-          <tbody>
-            {data.users.map((u: any) => (
-              <tr key={u.id}>
-                <td className="mono" title={u.address ?? ""}>{short(u.address)}</td>
-                <td className="mono">{usd(u.balanceUsd)}</td>
-                <td>{u.openPositions}</td>
-                <td className="mono">{usd(u.marginInUse)}</td>
-                <td>{u.depositsCredited}</td>
-                <td className="mono">{usd(u.withdrawn24h)}</td>
-                <td className="mono">{usd(u.withdrawnTotal)}</td>
-                <td><button className="btn btn-ghost sm" onClick={() => setEditing(u)}>Set balance</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {editing && (
-        <BalanceModal
-          user={editing}
-          onClose={() => setEditing(null)}
-          onDone={() => { setEditing(null); qc.invalidateQueries({ queryKey: ["admin-users"] }); }}
-        />
-      )}
-    </>
-  );
-}
-
-function BalanceModal({ user, onClose, onDone }: { user: any; onClose: () => void; onDone: () => void }) {
-  const [balance, setBalance] = useState(String(user.balanceUsd));
-  const [reason, setReason] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const m = useMutation({
-    mutationFn: () =>
-      adminFetch(`/users/${user.id}/balance`, {
-        method: "POST",
-        body: JSON.stringify({ balance: Number(balance), reason, confirm }),
-      }),
-    onSuccess: onDone,
-  });
-  const delta = Number(balance) - user.balanceUsd;
-
-  return (
-    <Modal title="Set user balance" onClose={onClose}>
-      <p className="adm-warn">
-        This is real money once withdrawals are live — whatever you set here can be withdrawn as
-        USDG through the normal path. The change is recorded in the audit log.
-      </p>
-      <Field label="User"><span className="mono">{user.address ?? user.id}</span></Field>
-      <Field label="Current"><span className="mono">{usd(user.balanceUsd)}</span></Field>
-      <Field label="New balance">
-        <input value={balance} onChange={(e) => setBalance(e.target.value)} inputMode="decimal" />
-      </Field>
-      {Number.isFinite(delta) && delta !== 0 && (
-        <p className={delta > 0 ? "adm-delta up" : "adm-delta down"}>
-          {delta > 0 ? "Crediting" : "Debiting"} {usd(Math.abs(delta))}
-        </p>
-      )}
-      <Field label="Reason (required)">
-        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. refund for failed withdrawal 0x…" />
-      </Field>
-      <Field label={`Type SET BALANCE to confirm`}>
-        <input value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="SET BALANCE" />
-      </Field>
-      {m.isError && <p className="adm-error">{(m.error as Error).message}</p>}
-      <div className="adm-modal-btns">
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-danger" disabled={m.isPending || confirm !== "SET BALANCE"} onClick={() => m.mutate()}>
-          {m.isPending ? "Saving…" : "Set balance"}
-        </button>
-      </div>
-    </Modal>
+    <div className="adm-tablewrap">
+      <table className="adm-table">
+        <thead>
+          <tr><th>Address</th><th>Balance</th><th>Open</th><th>Margin</th><th>Deposits</th><th>Withdrawn 24h</th><th>Total out</th></tr>
+        </thead>
+        <tbody>
+          {data.users.map((u: any) => (
+            <tr key={u.id}>
+              <td className="mono" title={u.address ?? ""}>{short(u.address)}</td>
+              <td className="mono">{usd(u.balanceUsd)}</td>
+              <td>{u.openPositions}</td>
+              <td className="mono">{usd(u.marginInUse)}</td>
+              <td>{u.depositsCredited}</td>
+              <td className="mono">{usd(u.withdrawn24h)}</td>
+              <td className="mono">{usd(u.withdrawnTotal)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
 /* ── Withdrawals ── */
 function Withdrawals({ paused, onChange }: { paused: boolean; onChange: () => void }) {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["admin-withdrawals"], queryFn: () => adminFetch("/withdrawals"), refetchInterval: 15_000 });
   const pause = useMutation({
     mutationFn: (p: boolean) => adminFetch("/withdrawals/pause", { method: "POST", body: JSON.stringify({ paused: p }) }),
     onSuccess: onChange,
+  });
+  // Re-asks the chain about one stuck withdrawal. Support picks the row; the receipt decides the
+  // result. There is nothing to fill in, because there is nothing for an operator to choose.
+  const recheck = useMutation({
+    mutationFn: (w: any) =>
+      adminFetch("/withdrawals/recheck", { method: "POST", body: JSON.stringify({ userId: w.userId, txHash: w.txHash }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-withdrawals"] });
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+    },
   });
   if (isLoading) return <div className="adm-skel">Loading…</div>;
 
@@ -338,11 +293,16 @@ function Withdrawals({ paused, onChange }: { paused: boolean; onChange: () => vo
           {paused ? "Resume withdrawals" : "Pause withdrawals"}
         </button>
       </div>
+      <p className="adm-hint">
+        Pending withdrawals are re-checked against the chain automatically every couple of
+        minutes. &ldquo;Re-check&rdquo; just asks now instead of waiting — it cannot change the
+        outcome, only read it.
+      </p>
       <div className="adm-tablewrap">
         <table className="adm-table">
-          <thead><tr><th>When</th><th>User</th><th>To</th><th>Amount</th><th>Status</th><th>Tx</th></tr></thead>
+          <thead><tr><th>When</th><th>User</th><th>To</th><th>Amount</th><th>Status</th><th>Tx</th><th></th></tr></thead>
           <tbody>
-            {data.withdrawals.length === 0 && <tr><td colSpan={6} className="adm-empty">No withdrawals yet</td></tr>}
+            {data.withdrawals.length === 0 && <tr><td colSpan={7} className="adm-empty">No withdrawals yet</td></tr>}
             {data.withdrawals.map((w: any, i: number) => (
               <tr key={i}>
                 <td>{ago(w.time)}</td>
@@ -351,11 +311,23 @@ function Withdrawals({ paused, onChange }: { paused: boolean; onChange: () => vo
                 <td className="mono">{usd(w.amount)}</td>
                 <td><span className={`adm-badge ${w.status}`}>{w.status}</span></td>
                 <td>{w.explorerUrl ? <a href={w.explorerUrl} target="_blank" rel="noopener noreferrer">{short(w.txHash)}</a> : "—"}</td>
+                <td>
+                  {w.status === "pending" && w.txHash && (
+                    <button
+                      className="btn btn-ghost sm"
+                      disabled={recheck.isPending}
+                      onClick={() => recheck.mutate(w)}
+                    >
+                      {recheck.isPending ? "Checking…" : "Re-check"}
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {recheck.isError && <p className="adm-error">{(recheck.error as Error).message}</p>}
     </>
   );
 }
@@ -512,7 +484,6 @@ function Markets() {
 
 /* ── Wallet ── */
 function Wallet({ o }: { o: any }) {
-  const [open, setOpen] = useState(false);
   if (!o) return <div className="adm-skel">Loading…</div>;
   return (
     <>
@@ -523,56 +494,14 @@ function Wallet({ o }: { o: any }) {
         <Stat label="Block" value={o.wallet.blockNumber ?? "—"} />
       </div>
       <section className="adm-card">
-        <h3>Send USDG</h3>
-        <p className="adm-warn">
-          Moves real funds out of the platform wallet. Capped per send, rate-limited, and written
-          to the audit log before broadcast. Money sent here is not deducted from any user
-          balance, so sending user-owned funds creates a shortfall — check the solvency figure
-          on Overview first.
+        <h3>Outbound transfers</h3>
+        <p className="adm-hint">
+          There is no send control here, and no API route behind one. The platform wallet pays out
+          only through a user&apos;s own withdrawal. Moving funds any other way means a one-off
+          script run on the server — deliberately not a button.
         </p>
-        <button className="btn btn-danger" onClick={() => setOpen(true)}>Send funds…</button>
       </section>
-      {open && <SendModal onClose={() => setOpen(false)} />}
     </>
-  );
-}
-
-function SendModal({ onClose }: { onClose: () => void }) {
-  const [to, setTo] = useState("");
-  const [amount, setAmount] = useState("");
-  const [reason, setReason] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [result, setResult] = useState<any>(null);
-  const m = useMutation({
-    mutationFn: () => adminFetch("/send", { method: "POST", body: JSON.stringify({ to, amount: Number(amount), reason, confirm }) }),
-    onSuccess: setResult,
-  });
-
-  if (result) {
-    return (
-      <Modal title="Sent" onClose={onClose}>
-        <p className="adm-hint">Transaction broadcast and confirmed.</p>
-        <Field label="Tx"><a href={result.explorerUrl} target="_blank" rel="noopener noreferrer" className="mono">{result.txHash}</a></Field>
-        <div className="adm-modal-btns"><button className="btn btn-primary" onClick={onClose}>Done</button></div>
-      </Modal>
-    );
-  }
-
-  return (
-    <Modal title="Send USDG from platform wallet" onClose={onClose}>
-      <p className="adm-warn">This is irreversible. Verify the destination address character by character.</p>
-      <Field label="To address"><input value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x…" className="mono" /></Field>
-      <Field label="Amount (USDG)"><input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00" /></Field>
-      <Field label="Reason (required)"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. treasury rebalance" /></Field>
-      <Field label="Type SEND FUNDS to confirm"><input value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="SEND FUNDS" /></Field>
-      {m.isError && <p className="adm-error">{(m.error as Error).message}</p>}
-      <div className="adm-modal-btns">
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-danger" disabled={m.isPending || confirm !== "SEND FUNDS"} onClick={() => m.mutate()}>
-          {m.isPending ? "Sending…" : "Send"}
-        </button>
-      </div>
-    </Modal>
   );
 }
 

@@ -12,6 +12,7 @@
  */
 import { Router } from "express";
 import { memDb, saveDb } from "../db/memory";
+import { recordCreditedTx, creditedTxCount } from "../db/credited-txs";
 import { authMiddleware } from "./auth";
 import { requireAdmin, requireConfirmation, adminCount } from "../middleware/require-admin";
 import { rateLimit } from "../middleware/rate-limit";
@@ -24,23 +25,24 @@ import {
   setMarketPaused,
 } from "../services/audit";
 import { scanDeposits } from "../services/deposits";
+import { reconcileWithdrawal } from "../services/withdrawals";
+// No sendUsdg import, on purpose: this router holds no path that moves funds. Keeping the
+// import around would make re-adding one a one-line accident.
 import {
   getPlatformAddress,
   getUsdgBalance,
   getGasBalance,
   getBlockNumber,
-  sendUsdg,
-  isValidAddress,
   isPlatformConfigured,
   isRpcConfigured,
   getChainConfig,
 } from "../services/evm";
-import { normalizeAddress, txUrl } from "shared/chain";
+// txUrl only — for rendering explorer links on the withdrawals view. normalizeAddress and
+// isValidAddress went with /send; nothing here takes an address as input any more.
+import { txUrl } from "shared/chain";
 import {
   WITHDRAW_DAILY_LIMIT_GLOBAL,
   WITHDRAW_DAILY_LIMIT_PER_USER,
-  ADMIN_MAX_SEND,
-  ADMIN_MAX_BALANCE_SET,
 } from "shared/constants";
 
 export const adminRouter = Router();
@@ -158,7 +160,8 @@ adminRouter.get("/users", (_req: any, res) => {
       balanceUsd: Number(u.balance_usd || 0),
       openPositions: open.length,
       marginInUse: open.reduce((s: number, p: any) => s + Number(p.collateral || 0), 0),
-      depositsCredited: (u.credited_txs ?? []).length,
+      // Lifetime count, not the retained key count — credited-txs.ts prunes old keys.
+      depositsCredited: creditedTxCount(u),
       withdrawalCount: ws.length,
       withdrawnTotal: ws.filter((w: any) => w.status === "confirmed").reduce((s: number, w: any) => s + Number(w.amount || 0), 0),
       withdrawn24h: withdrawn24h(u),
@@ -293,9 +296,9 @@ adminRouter.post(
     if (!user) return res.status(404).json({ error: "User not found" });
 
     // Same dedupe key the scanner uses, so a claim can never double-credit a transfer that the
-    // scanner later attributes on its own.
-    if (!user.credited_txs) user.credited_txs = [];
-    if (user.credited_txs.includes(key)) {
+    // scanner later attributes on its own. recordCreditedTx is check-and-set: a false return
+    // means the key was already there.
+    if (!recordCreditedTx(user, key)) {
       row.status = "claimed";
       saveDb();
       return res.status(409).json({ error: "Already credited to this user" });
@@ -303,7 +306,6 @@ adminRouter.post(
 
     const before = Number(user.balance_usd);
     user.balance_usd = String(before + Number(row.amount));
-    user.credited_txs.push(key);
     row.status = "claimed";
     row.claimedBy = user.id;
     row.claimedAt = new Date().toISOString();
@@ -318,75 +320,76 @@ adminRouter.post(
   },
 );
 
-// ── Money-moving. Confirmed, capped, rate-limited, audited. ──
-
-// POST /api/admin/users/:id/balance  { balance, reason, confirm }
+// POST /api/admin/withdrawals/recheck  { userId, txHash }
+//
+// Support tool for the one case the automatic reconciler cannot close on its own: a withdrawal
+// broadcast but with no visible receipt, left `pending` with the user's balance still deducted.
+// The timer retries these every couple of minutes anyway; this exists so support can force the
+// check while a user is on the other end of a ticket rather than saying "wait".
+//
+// The caller chooses WHICH withdrawal. The chain decides WHAT happens to it. There is no
+// parameter for the outcome, the amount or the destination, and the function it calls is the
+// same one the automatic sweep uses — so this cannot reach a result the reconciler would not
+// have reached by itself a few minutes later. That is the entire point: support capability
+// without discretion over anyone's balance.
 adminRouter.post(
-  "/users/:id/balance",
-  rateLimit(60 * 60_000, 20, "adminbal"),
-  requireConfirmation("SET BALANCE"),
-  (req: any, res) => {
-    const user = memDb.users.find((u: any) => u.id === req.params.id);
-    if (!user) return res.status(404).json({ error: "User not found" });
-
-    const next = Number(req.body?.balance);
-    if (!Number.isFinite(next) || next < 0) return res.status(400).json({ error: "balance must be a non-negative number" });
-    // Once withdrawals are live a balance edit IS real money: whatever is set here can leave
-    // through the normal withdrawal path. The cap bounds a fat-finger or a stolen session.
-    if (next > ADMIN_MAX_BALANCE_SET) {
-      return res.status(400).json({ error: `Balance cannot be set above ${ADMIN_MAX_BALANCE_SET} from the panel` });
-    }
-    const reason = String(req.body?.reason ?? "").trim();
-    if (reason.length < 3) return res.status(400).json({ error: "A reason is required" });
-
-    const before = Number(user.balance_usd);
-    user.balance_usd = String(next);
-    saveDb();
-
-    audit({
-      admin: req.adminAddress, action: "user.balance.set", target: user.id,
-      before, after: next, detail: { reason, delta: next - before, address: user.public_key }, ip: req.ip,
-    });
-    res.json({ ok: true, userId: user.id, before, after: next });
-  },
-);
-
-// POST /api/admin/send  { to, amount, reason, confirm }
-adminRouter.post(
-  "/send",
-  rateLimit(60 * 60_000, 10, "adminsend"),
-  requireConfirmation("SEND FUNDS"),
+  "/withdrawals/recheck",
+  rateLimit(60_000, 30, "adminrecheck"),
   async (req: any, res) => {
     try {
-      if (!isPlatformConfigured()) return res.status(503).json({ error: "Platform wallet not configured" });
+      const userId = String(req.body?.userId ?? "");
+      const txHash = String(req.body?.txHash ?? "");
+      if (!userId || !txHash) return res.status(400).json({ error: "userId and txHash required" });
 
-      const to = String(req.body?.to ?? "");
-      const amount = Number(req.body?.amount);
-      const reason = String(req.body?.reason ?? "").trim();
+      const user = memDb.users.find((u: any) => u.id === userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
 
-      if (!isValidAddress(to)) return res.status(400).json({ error: "Invalid destination address" });
-      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: "amount must be positive" });
-      if (amount > ADMIN_MAX_SEND) return res.status(400).json({ error: `Single send is capped at ${ADMIN_MAX_SEND} USDG` });
-      if (reason.length < 3) return res.status(400).json({ error: "A reason is required" });
+      // Matched on txHash, which is unique per withdrawal because sends are nonce-serialised.
+      // Rows with no txHash were never broadcast and the sweep restores those unprompted.
+      const w = (user.withdrawals ?? []).find((row: any) => row.txHash === txHash);
+      if (!w) return res.status(404).json({ error: "Withdrawal not found" });
+      if (w.status !== "pending") {
+        return res.status(409).json({ error: `Already ${w.status}`, status: w.status });
+      }
 
-      // Audit BEFORE broadcasting. If the process dies mid-send there must still be a record
-      // that an outbound transfer was attempted, with the destination.
-      const entry = audit({
-        admin: req.adminAddress, action: "wallet.send", target: normalizeAddress(to),
-        detail: { amount, reason, status: "attempting" }, ip: req.ip,
-      });
-
-      const result = await sendUsdg(to, amount);
-      entry.detail = { ...(entry.detail as object), status: result.status, txHash: result.txHash };
+      const before = Number(user.balance_usd);
+      const outcome = await reconcileWithdrawal(user, w);
       saveDb();
 
-      if (result.status === "reverted") {
-        return res.status(500).json({ error: "Transaction reverted on-chain", txHash: result.txHash });
-      }
-      res.json({ ok: true, txHash: result.txHash, explorerUrl: txUrl(getChainConfig(), result.txHash) });
+      audit({
+        admin: req.adminAddress, action: "withdrawal.recheck", target: user.id,
+        before, after: Number(user.balance_usd),
+        detail: { txHash, outcome, amount: w.amount }, ip: req.ip,
+      });
+
+      res.json({ ok: true, outcome, status: w.status, balance: Number(user.balance_usd) });
     } catch (err: any) {
-      audit({ admin: req.adminAddress, action: "wallet.send.failed", detail: { error: err.message }, ip: req.ip });
       res.status(500).json({ error: err.message });
     }
   },
 );
+
+// ── No money-moving routes. This is deliberate — do not add one. ──
+//
+// There used to be two: POST /send (transfer from the hot wallet to any address) and
+// POST /users/:id/balance (set a balance outright). Both are gone.
+//
+// Between them they were a complete value-creation path. A balance edit is not bookkeeping once
+// withdrawals are live: whatever is written there leaves through the normal /account/withdraw
+// route as real USDG. So an admin session — or anything that stole one: a lifted JWT, a phished
+// signature, an XSS in the panel — could mint a claim and walk it out. The caps bounded a
+// fat-finger; they were never a security boundary, because the same session could repeat.
+//
+// What remains reachable over HTTP: reads, the pause switches, and /deposits/:key/claim, which
+// is bounded by a Transfer that actually arrived on-chain (the amount comes from the stored log,
+// never the request body) and therefore cannot create value that was not deposited.
+//
+// This does NOT make funds unmovable, and the docs must not claim it does. evm.ts loads
+// PLATFORM_WALLET_KEY from the server environment because the withdrawal path needs it, so
+// anyone with filesystem access to the box can still move everything. What changed is that no
+// API route can. Moving funds outside a user's own withdrawal now requires getting onto the
+// server, which is a different and much higher bar than holding a browser session.
+//
+// If you need a manual payout or a balance correction, write a one-off script and run it on the
+// box. Deliberately more friction than a button, and it leaves a trail somewhere other than the
+// database it is editing.

@@ -82,14 +82,12 @@ export const WITHDRAW_DAILY_LIMIT_GLOBAL = 25000;
 /** Largest single withdrawal permitted without manual review. */
 export const WITHDRAW_MAX_SINGLE = 2500;
 
-// ── Admin panel blast-radius caps ──
+// ── Admin panel blast-radius caps: removed, along with what they capped ──
 //
-// These bound what a single admin request can do. They are NOT a security boundary — anyone
-// holding a valid admin session can repeat a request — but they turn "one click empties the
-// wallet" into "one click moves at most this much", and they catch fat-fingered amounts.
-// Raise them deliberately; a bigger number here is a bigger worst case.
-
-/** Max USDG a single admin /send may move. */
-export const ADMIN_MAX_SEND = 5000;
-/** Ceiling on a manually set user balance. */
-export const ADMIN_MAX_BALANCE_SET = 100000;
+// ADMIN_MAX_SEND and ADMIN_MAX_BALANCE_SET used to bound POST /admin/send and
+// POST /admin/users/:id/balance. Both routes are gone (see routes/admin.ts), so the caps went
+// with them rather than sitting here implying a capability that no longer exists.
+//
+// They were never a security boundary anyway — a session that could send once could send again.
+// Deleting the routes is the boundary. Do not reintroduce either constant without reading the
+// note in routes/admin.ts about why the routes are absent.
