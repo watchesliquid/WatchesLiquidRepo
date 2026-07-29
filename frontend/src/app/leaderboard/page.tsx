@@ -47,7 +47,8 @@ export default function LeaderboardPage() {
               <div className="lb-rank">
                 {entry.rank <= 3 ? ["🥇","🥈","🥉"][entry.rank-1] : `#${entry.rank}`}
               </div>
-              <div className="lb-user">{entry.userId?.slice(0, 6)}...{entry.userId?.slice(-4)}</div>
+              {/* `trader` is a pseudonym from the API; the raw userId is no longer published. */}
+              <div className="lb-user">{entry.trader}</div>
               <div className={`lb-pnl ${entry.pnl >= 0 ? 'text-green' : 'text-red'}`}>
                 {entry.pnl >= 0 ? '+' : ''}${entry.pnl?.toFixed(2)}
               </div>

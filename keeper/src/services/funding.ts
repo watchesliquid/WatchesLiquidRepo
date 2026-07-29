@@ -7,6 +7,22 @@ import { MAX_FUNDING_RATE, BASE_FUNDING_RATE, FUNDING_INTERVAL_MS } from "shared
  *
  * Like risk-engine, this previously ran against Postgres while the rest of the app used memDb,
  * so it has never actually settled a payment.
+ *
+ * KNOWN GAP, needs a product decision rather than a patch. Flooring the debit at zero stops the
+ * data-integrity damage, but it leaves an economic hole: a position held on the paying side by
+ * an account with no spare balance now pays nothing at all, indefinitely, while the other side
+ * keeps being credited. That is free leverage financing, and it is deliberately farmable.
+ *
+ * Closing it properly means one of:
+ *   a) charging funding against the position's collateral — true isolated margin, and the
+ *      position moves toward liquidation as it fails to fund. Correct, but it makes the
+ *      `liquidation_price` stored at open (and published in the docs and UI) stale, so it needs
+ *      a UI and docs change alongside.
+ *   b) force-closing a position that cannot meet funding, which is a new close reason and a new
+ *      thing to explain to users.
+ *
+ * Do not pick one of these silently. Until then, the shortfall is recorded on every payment row
+ * and logged, so the cost is at least measurable.
  */
 export async function settleFunding(): Promise<{ payments: number }> {
   const now = Date.now();
@@ -47,7 +63,41 @@ export async function settleFunding(): Promise<{ payments: number }> {
       const payment = (position.direction === "long" ? -1 : 1) * base * fundingRate;
 
       const user = memDb.users.find((u: any) => u.id === position.user_id);
-      if (user) user.balance_usd = String(Number(user.balance_usd) + payment);
+
+      // A debit may not take a balance below zero.
+      //
+      // It used to. Funding is charged on NOTIONAL, so at 50x a $100 position owes $5 per
+      // interval — and a user whose collateral is all in positions has a $0 wallet balance, so
+      // the debit simply went negative and kept going. Three problems with that:
+      //
+      //   1. It walks past isolated margin, which promises losses stop at the collateral.
+      //   2. The debt is uncollectable. Wallets are free, so the account is abandonable, while
+      //      the other side of the trade was credited real, withdrawable USDG.
+      //   3. It corrupted proof-of-reserves, where a negative balance SUBTRACTED from what the
+      //      platform reported owing. (Also fixed, in transparency.ts.)
+      //
+      // Credits are untouched — funding is not zero-sum here by design and the house absorbs the
+      // difference, which is the documented model.
+      let applied = payment;
+      let shortfall = 0;
+      if (user && payment < 0) {
+        const available = Math.max(0, Number(user.balance_usd));
+        if (available < -payment) {
+          applied = -available;
+          shortfall = payment - applied; // negative: what could not be collected
+        }
+      }
+
+      if (user) user.balance_usd = String(Number(user.balance_usd) + applied);
+
+      if (shortfall < 0) {
+        // Loud, because this is the platform eating a cost. A position that repeatedly cannot
+        // fund itself is a position that should probably be closed — see the note below.
+        console.warn(
+          `[funding] shortfall ${shortfall.toFixed(4)} on position ${position.id} ` +
+            `(user ${position.user_id}): owed ${payment.toFixed(4)}, collected ${applied.toFixed(4)}`,
+        );
+      }
 
       memDb.fundingPayments.push({
         id: crypto.randomUUID(),
@@ -56,6 +106,8 @@ export async function settleFunding(): Promise<{ payments: number }> {
         market_id: market.id,
         rate: String(fundingRate),
         payment: String(payment),
+        applied: String(applied),
+        shortfall: String(shortfall),
         paid_at: new Date(now).toISOString(),
       });
       paymentCount++;

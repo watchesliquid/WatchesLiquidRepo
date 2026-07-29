@@ -147,9 +147,15 @@ if (isPlatformConfigured()) {
   console.warn("[deposits] PLATFORM_WALLET_KEY not configured — deposit scanning disabled");
 }
 
-app.listen(PORT, () => {
+// Loopback by default. nginx proxies to 127.0.0.1:3001, so there is no reason for the keeper to
+// answer the public internet directly — and doing so let anyone skip the proxy, which is also
+// the only thing that makes X-Forwarded-For trustworthy for the rate limiter. Override with
+// BIND_HOST=0.0.0.0 only if something genuinely needs to reach it off-box.
+const HOST = process.env.BIND_HOST ?? "127.0.0.1";
+
+app.listen(PORT, HOST, () => {
   const cfg = getChainConfig();
-  console.log(`[keeper] Server running on http://localhost:${PORT}`);
+  console.log(`[keeper] Server running on http://${HOST}:${PORT}`);
   console.log(`[keeper] ${memDb.markets.length} markets loaded`);
   console.log(`[keeper] chain: ${cfg.name} (${cfg.chainId})  USDG ${cfg.usdgAddress}`);
   if (isPlatformConfigured()) console.log(`[keeper] platform wallet: ${getPlatformAddress()}`);

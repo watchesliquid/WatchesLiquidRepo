@@ -64,8 +64,16 @@ export function totalUserClaims(): {
   openPositions: number;
   users: number;
 } {
+  // Each account is floored at zero rather than summed raw.
+  //
+  // A negative balance is a debt to the platform, and summing it raw SUBTRACTED it from what we
+  // owe — so uncollectable debt made the coverage ratio look better than it is. Wallets are free,
+  // so a negative balance is abandonable at will and is worth exactly nothing as an asset.
+  //
+  // This can only ever make reported liabilities larger, which is the correct direction for a
+  // number people are asked to check solvency against.
   let userBalances = 0;
-  for (const u of memDb.users as any[]) userBalances += Number(u.balance_usd) || 0;
+  for (const u of memDb.users as any[]) userBalances += Math.max(0, Number(u.balance_usd) || 0);
 
   let openPositionCollateral = 0;
   let openPositionUnrealizedPnl = 0;

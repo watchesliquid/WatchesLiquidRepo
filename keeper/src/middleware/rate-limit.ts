@@ -33,10 +33,21 @@ setInterval(() => {
  */
 export function rateLimit(windowMs: number, max: number, keyPrefix = "g") {
   return (req: Request, res: Response, next: NextFunction) => {
-    // Behind nginx, req.ip is the proxy unless trust proxy is set — prefer the forwarded
-    // header's first hop, which nginx sets from the real client.
-    const fwd = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
-    const key = `${keyPrefix}:${fwd || req.ip || "unknown"}`;
+    // req.ip, NOT the raw X-Forwarded-For header.
+    //
+    // This used to read `x-forwarded-for`.split(",")[0], on the belief that nginx sets the first
+    // hop from the real client. It does the opposite: `$proxy_add_x_forwarded_for` APPENDS the
+    // real address to whatever the client sent, so the header arrives as
+    // "<whatever the caller typed>, <real ip>" and the first entry is attacker-controlled.
+    //
+    // Sending a different value per request therefore minted a fresh bucket every time and made
+    // every limit here decorative — auth, the global cap, the admin rescan cap, all of it.
+    //
+    // express computes req.ip correctly from the RIGHT of that header, honouring the
+    // `trust proxy` setting in index.ts, which was already configured properly. The manual parse
+    // was overriding the thing that was right. Do not reintroduce it; if the proxy depth ever
+    // changes, change `trust proxy`, not this.
+    const key = `${keyPrefix}:${req.ip || "unknown"}`;
 
     const now = Date.now();
     const b = buckets.get(key);
