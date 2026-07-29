@@ -278,8 +278,19 @@ export interface SendResult {
  * waitForTransactionReceipt does NOT — a tx that mines and reverts resolves normally with
  * status "reverted". Porting the old try/catch shape verbatim would treat a reverted transfer
  * as success: balance deducted, no funds sent, txHash recorded. Callers must check status.
+ *
+ * `onBroadcast` fires the instant the hash exists and BEFORE the receipt is awaited, so a caller
+ * can make it durable first. That gap is not theoretical: waiting for a receipt takes seconds,
+ * and a crash inside it left a `pending` withdrawal with no txHash — which the reconciler reads
+ * as "never broadcast" and refunds, while the transfer is confirming on-chain. The callback is
+ * awaited; if persisting the hash throws, the send fails loudly rather than proceeding with an
+ * unrecorded transaction in flight.
  */
-export async function sendUsdg(to: string, amount: number): Promise<SendResult> {
+export async function sendUsdg(
+  to: string,
+  amount: number,
+  onBroadcast?: (txHash: string) => void | Promise<void>,
+): Promise<SendResult> {
   if (!isValidAddressFormat(to)) throw new Error("Invalid recipient address");
   if (!(amount > 0)) throw new Error("Amount must be positive");
 
@@ -307,6 +318,9 @@ export async function sendUsdg(to: string, amount: number): Promise<SendResult> 
       nextNonce = null;
       throw err;
     }
+
+    // Durable before the wait, not after. Everything below this line can take seconds.
+    if (onBroadcast) await onBroadcast(txHash);
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 1 });
     return { txHash, status: receipt.status === "success" ? "success" : "reverted" };

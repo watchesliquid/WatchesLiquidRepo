@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { memDb, saveDb } from "../db/memory";
+import { memDb, saveDb, flushDb } from "../db/memory";
 import { authMiddleware } from "./auth";
 import {
   getPlatformAddress,
@@ -144,7 +144,24 @@ accountRouter.post("/withdraw", async (req: any, res) => {
     if (!user.withdrawals) user.withdrawals = [];
     const record: any = { to: normalizeAddress(toAddress), amount, status: "pending", txHash: null, time: new Date().toISOString() };
     user.withdrawals.push(record);
-    saveDb();
+
+    // flushDb, NOT saveDb. Recording `pending` before broadcast is the entire safety design of
+    // this route — it is what lets the reconciler resolve a crash mid-send. saveDb defers the
+    // write 200ms, so a crash inside that window meant the transfer went out with no record of
+    // it and no debit on disk: the user kept the balance and the funds. Writing synchronously
+    // here is the difference between a design and a comment describing one.
+    //
+    // If the write fails we must not broadcast. Releasing the reservation and refusing is the
+    // only safe answer: an unrecorded outbound transfer is exactly what this prevents.
+    try {
+      flushDb();
+    } catch (err: any) {
+      user.balance_usd = String(Number(user.balance_usd) + amount);
+      user.withdrawals.pop();
+      (user as any)._withdrawing = false;
+      console.error("[withdraw] could not persist the pending record, refusing to send:", err.message);
+      return res.status(503).json({ error: "Withdrawals temporarily unavailable (storage)" });
+    }
 
     // Gas pre-flight. An unfunded platform wallet fails every send, so refuse before broadcasting
     // — but the balance is already reserved, so release it explicitly on this path.
@@ -161,9 +178,32 @@ accountRouter.post("/withdraw", async (req: any, res) => {
 
     let result;
     try {
-      result = await sendUsdg(toAddress, amount);
+      // Persist the hash the moment it exists, before the receipt wait. Without this there is a
+      // seconds-long window where the transfer is confirming on-chain but the row still says
+      // txHash: null — which reconcileWithdrawal reads as "never broadcast" and refunds, on top
+      // of a transfer that actually went out.
+      result = await sendUsdg(toAddress, amount, (txHash) => {
+        record.txHash = txHash;
+        flushDb();
+      });
     } catch (sendErr: any) {
-      // No txHash was ever produced => nothing is on-chain => restoring is correct.
+      // "Threw" no longer implies "nothing was broadcast": the onBroadcast callback above runs
+      // AFTER the transfer is on the wire, so if persisting the hash fails, this catch is
+      // reached with a live transaction. Restoring the balance there would refund a withdrawal
+      // that is about to confirm. Decide from the record, not from the fact that we threw.
+      if (record.txHash) {
+        record.status = "pending";
+        record.error = `send threw after broadcast: ${sendErr.message}`;
+        saveDb();
+        (user as any)._withdrawing = false;
+        console.error(`[withdraw] broadcast ${record.txHash} then threw — left pending for the reconciler:`, sendErr.message);
+        return res.status(500).json({
+          error: "Transaction was broadcast but its result is unconfirmed. It will be reconciled automatically.",
+          txHash: record.txHash,
+        });
+      }
+
+      // No txHash => nothing is on-chain => restoring is correct.
       user.balance_usd = String(Number(user.balance_usd) + amount);
       record.status = "failed";
       record.error = sendErr.message;

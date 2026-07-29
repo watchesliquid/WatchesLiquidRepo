@@ -56,21 +56,49 @@ export function loadDb() {
   return false;
 }
 
-// Save to disk (debounced)
+/** The actual write. Atomic: a partial file can never replace a good one. */
+function writeNow(): void {
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmp = DB_PATH + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(memDb, null, 2), "utf-8");
+  fs.renameSync(tmp, DB_PATH);
+}
+
+// Save to disk (debounced). Fine for anything that can be recomputed or retried.
 let saveTimer: NodeJS.Timeout | null = null;
 export function saveDb() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
-      const dir = path.dirname(DB_PATH);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const tmp = DB_PATH + ".tmp";
-      fs.writeFileSync(tmp, JSON.stringify(memDb, null, 2), "utf-8");
-      fs.renameSync(tmp, DB_PATH); // atomic write
+      writeNow();
     } catch (err) {
       console.error("[db] Failed to save:", (err as Error).message);
     }
   }, 200);
+}
+
+/**
+ * Write to disk NOW, synchronously, and cancel any pending debounce.
+ *
+ * Use this — not saveDb — at any point where the next thing that happens is irreversible and
+ * off-box. The withdrawal path is the reason it exists: it records a withdrawal as `pending`
+ * BEFORE broadcasting, precisely so a crash mid-send leaves a row for the reconciler to resolve.
+ * saveDb defers that write by 200ms, which silently defeated the design — a crash inside that
+ * window meant USDG left the hot wallet with no record of it and the user's balance never
+ * debited on disk, so they kept the funds and the balance both. The reconciler could not help:
+ * there was no row to reconcile.
+ *
+ * Throws rather than logging. A caller about to move money must be able to abort if the record
+ * of that move cannot be persisted — swallowing the error here would put us straight back into
+ * the failure this prevents.
+ */
+export function flushDb(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  writeNow();
 }
 
 // Also auto-save every 10 seconds to catch direct array mutations

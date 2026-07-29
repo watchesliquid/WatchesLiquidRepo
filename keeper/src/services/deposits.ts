@@ -176,8 +176,15 @@ export async function scanDeposits(): Promise<{ credited: number; scannedTo: num
       console.log(`[deposits] +${amount.toFixed(2)} USDG -> ${sender.slice(0, 10)}… (${key.slice(0, 20)}…)`);
     }
 
-    // Order matters: credit, persist, THEN advance. Crash before the save and the chunk is
-    // rescanned and dedupe absorbs it; crash after and the chunk is never revisited.
+    // Safe against a crash, though not for the reason the ordering suggests: saveDb is debounced,
+    // so these two calls collapse into a single write and the cursor can never reach disk without
+    // the credits that preceded it. The guarantee comes from memory.ts writing the whole memDb as
+    // one atomic file — balances, credited_txs and the cursor are one blob or nothing.
+    //
+    // So a crash before that write rescans the chunk and re-credits it, which is correct because
+    // credited_txs was not persisted either. This is why the deposit path needs no flushDb: the
+    // worst case is repeated work, never lost or doubled money. The withdrawal path is different
+    // — it hands money to the chain, which cannot be replayed — and flushes synchronously.
     if (logs.length > 0) saveDb();
     setCursor(to);
     saveDb();
