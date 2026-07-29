@@ -2,6 +2,7 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import { memDb } from "../db/memory";
 import { verifySignature, getChainConfig } from "../services/evm";
+import { checkAuthFreshness, consumeAuthMessage } from "../services/auth-replay";
 import { AUTH_PREFIX, normalizeAddress, isValidAddressFormat } from "shared/chain";
 import { SIGNUP_BALANCE_USD } from "shared/constants";
 
@@ -125,12 +126,21 @@ authRouter.post("/wallet", async (req, res) => {
 
     // Still lands on the timestamp — the message is single-line and ':'-delimited by design.
     const timestamp = parseInt(message.split(":").pop() ?? "0");
-    if (!timestamp || Date.now() - timestamp > 5 * 60 * 1000) {
-      return res.status(400).json({ error: "Auth message expired" });
-    }
+    const staleness = checkAuthFreshness(timestamp);
+    if (staleness) return res.status(400).json({ error: staleness });
 
     const valid = await verifySignature(address, message, signature);
     if (!valid) return res.status(401).json({ error: "Invalid signature" });
+
+    // Burn the message. A valid signature proves the key signed this string once; it does not
+    // prove the request came from the key holder, so without this an intercepted message could
+    // be redeemed for a fresh 7-day token repeatedly until its timestamp aged out.
+    //
+    // After verifySignature, never before: consuming first would let anyone invalidate a
+    // legitimate user's in-flight login by replaying it with a junk signature.
+    if (!consumeAuthMessage(message, timestamp)) {
+      return res.status(401).json({ error: "Auth message already used. Please sign in again." });
+    }
 
     // Lookup AND storage both use the normalised form. A case mismatch here would silently
     // create a second account for the same wallet, with its own fresh balance.
