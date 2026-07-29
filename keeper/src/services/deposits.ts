@@ -1,4 +1,5 @@
 import { memDb, saveDb } from "../db/memory";
+import { hasCreditedTx, recordCreditedTx } from "../db/credited-txs";
 import { getChainConfig, getPlatformAddress, getBlockNumber, publicClient, fromUsdgUnits } from "./evm";
 import { ERC20_ABI, normalizeAddress } from "shared/chain";
 import type { Address } from "viem";
@@ -45,6 +46,26 @@ function setCursor(block: number): void {
   else memDb.chainState.push({ id: cursorId(), lastScannedBlock: block });
 }
 
+/**
+ * The cursor value a cold start must seed so that `firstWantedBlock` is actually scanned.
+ *
+ * The cursor records the last block ALREADY scanned and the log query is exclusive of it, so
+ * seeding it to the first wanted block skips that block permanently. Exported for
+ * tests/scan-window.test.ts.
+ */
+export function coldStartCursor(firstWantedBlock: number): number {
+  return Math.max(0, firstWantedBlock - 1);
+}
+
+/** The inclusive block range one chunk covers, given the cursor. Exclusive of the cursor itself. */
+export function chunkRange(
+  cursorBlock: number,
+  safeHead: number,
+  chunk: number,
+): { fromBlock: number; toBlock: number } {
+  return { fromBlock: cursorBlock + 1, toBlock: Math.min(cursorBlock + chunk, safeHead) };
+}
+
 export async function scanDeposits(): Promise<{ credited: number; scannedTo: number }> {
   const cfg = getChainConfig();
   const platform = getPlatformAddress();
@@ -58,11 +79,23 @@ export async function scanDeposits(): Promise<{ credited: number; scannedTo: num
 
   let from = cursor()?.lastScannedBlock;
   if (from === undefined) {
+    // The cursor means "the last block already scanned", and the query below is exclusive of it
+    // (fromBlock: from + 1). Cold start therefore has to seed it to one BELOW the first block we
+    // want, or that block is skipped forever — the cursor advances past it on the very first
+    // tick and nothing ever looks at it again.
+    //
+    // For EVM_START_BLOCK that is a plain bug: an operator setting it to N means "start scanning
+    // AT N", and N was being dropped. For the default it is a one-block hole at the head on
+    // every fresh deploy, which is small but is exactly where the first deposit tends to land.
+    //
     // Never scan from block 0 — testnet is already ~90M blocks deep.
-    from = START_BLOCK ?? safeHead;
+    const firstWanted = START_BLOCK ?? safeHead;
+    from = coldStartCursor(firstWanted);
     setCursor(from);
     saveDb();
-    console.log(`[deposits] cold start on ${cfg.name} (${cfg.chainId}), cursor set to block ${from}`);
+    console.log(
+      `[deposits] cold start on ${cfg.name} (${cfg.chainId}), scanning from block ${firstWanted}`,
+    );
   }
   if (from >= safeHead) return { credited: 0, scannedTo: from };
 
@@ -70,7 +103,7 @@ export async function scanDeposits(): Promise<{ credited: number; scannedTo: num
   let chunks = 0;
 
   while (from < safeHead && chunks < MAX_CHUNKS_PER_TICK) {
-    const to = Math.min(from + CHUNK, safeHead);
+    const { fromBlock, toBlock: to } = chunkRange(from, safeHead, CHUNK);
 
     // Rebuilt per CHUNK, not once per tick. A catch-up scan can run up to 50 chunks across many
     // seconds of awaited RPC calls, and anyone who registered during that window was absent from
@@ -87,7 +120,7 @@ export async function scanDeposits(): Promise<{ credited: number; scannedTo: num
       abi: ERC20_ABI,
       eventName: "Transfer",
       args: { to: platform as Address }, // server-side topic2 filter
-      fromBlock: BigInt(from + 1),
+      fromBlock: BigInt(fromBlock),
       toBlock: BigInt(to),
     });
 
@@ -126,14 +159,19 @@ export async function scanDeposits(): Promise<{ credited: number; scannedTo: num
       // txHash alone is NOT enough: one tx can carry several USDG transfers to the platform
       // (batch/multicall), and keying on it would credit the first and silently drop the rest.
       const key = `${log.transactionHash}:${log.logIndex}`;
-      if (!user.credited_txs) user.credited_txs = [];
-      if (user.credited_txs.includes(key)) continue;
+      if (hasCreditedTx(user, key)) continue;
 
       const amount = await fromUsdgUnits(value);
+
+      // recordCreditedTx is the check-and-set, and it runs BEFORE the credit for the same reason
+      // the withdraw path is synchronous: `await fromUsdgUnits` above is a suspension point, and
+      // two ticks that overlapped there would both pass the hasCreditedTx check and both credit.
+      // Claiming the key first makes the loser a no-op instead of a double credit.
+      if (!recordCreditedTx(user, key)) continue;
+
       // 1 USDG == 1 USD, so crediting 1:1 is correct here. The Solana rail did the same thing
       // with SOL, which was a real bug — it credited 1 SOL as $1.
       user.balance_usd = String(Number(user.balance_usd) + amount);
-      user.credited_txs.push(key);
       credited++;
       console.log(`[deposits] +${amount.toFixed(2)} USDG -> ${sender.slice(0, 10)}… (${key.slice(0, 20)}…)`);
     }
