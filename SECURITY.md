@@ -104,6 +104,20 @@ difference. There is no LP pool accounting for it yet.
 **The database is a JSON file** held in memory and written on a debounce. A hard
 crash can lose the most recent moments of state.
 
+**Sessions are httpOnly cookies, not localStorage.** The token used to be kept in
+localStorage, where any script on the page can read it — one XSS, in our code or
+in a dependency, was a stolen 7-day session. The cookie is `HttpOnly`,
+`SameSite=Strict`, and `Secure` outside development.
+
+An XSS can still act as the user while the page is open. What it can no longer do
+is take the credential away with it.
+
+`SameSite=Strict` is free here because the app and the API share an origin —
+nginx proxies `/api/` in production, the Next config rewrites it in development —
+so no cross-site request ever carries the cookie, and there is no CSRF token to
+add. The `Authorization: Bearer` path is still accepted, for the CLI scripts,
+which have no cookie jar.
+
 **The API must run as a single process.** Three things keep state in-process and
 assume one instance:
 

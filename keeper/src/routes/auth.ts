@@ -73,13 +73,71 @@ function signToken(userId: string): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: "7d" });
 }
 
-export function authMiddleware(req: any, res: any, next: any) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing token" });
+/**
+ * The session cookie.
+ *
+ * The token used to live only in localStorage, which means any script running on the page can
+ * read it — one XSS anywhere in the app, or in a dependency, hands over a 7-day session. An
+ * httpOnly cookie is not reachable from JavaScript at all, so the same XSS can still act as the
+ * user while the page is open, but cannot walk away with a credential.
+ *
+ * Same-site works in both environments without special-casing: nginx serves the app and proxies
+ * /api/ under one origin in production, and next.config.mjs rewrites /api to the keeper in
+ * development. The browser only ever sees one origin, so SameSite=Strict is free — no
+ * cross-site request carries this cookie, which is why adding CSRF tokens is not needed here.
+ *
+ * Secure is set outside development only because localhost is plain http; a Secure cookie there
+ * would simply never be stored.
+ */
+const AUTH_COOKIE = "wl_session";
+const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60; // matches the JWT expiry
+
+function setAuthCookie(res: any, token: string): void {
+  const parts = [
+    `${AUTH_COOKIE}=${token}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    "Path=/",
+    `Max-Age=${SESSION_MAX_AGE_S}`,
+  ];
+  if (process.env.NODE_ENV === "production") parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+function clearAuthCookie(res: any): void {
+  const parts = [`${AUTH_COOKIE}=`, "HttpOnly", "SameSite=Strict", "Path=/", "Max-Age=0"];
+  if (process.env.NODE_ENV === "production") parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+/**
+ * Hand-rolled rather than pulling in cookie-parser. This is ~8 lines against a header format
+ * that has not changed in twenty years, and every dependency is supply-chain surface on a box
+ * holding a hot wallet key — the same reasoning as the rate limiter.
+ */
+function readCookie(req: any, name: string): string | null {
+  const raw = req.headers?.cookie;
+  if (typeof raw !== "string") return null;
+  for (const part of raw.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
   }
+  return null;
+}
+
+export function authMiddleware(req: any, res: any, next: any) {
+  // Cookie first, Authorization header second. The header path is kept deliberately: tokens
+  // issued before the cookie existed are still valid for their full 7 days, and the CLI scripts
+  // (race-check, admin-check, mainnet-smoke) authenticate with a bearer token and have no
+  // cookie jar. Removing it would break both.
+  const header = req.headers.authorization;
+  const token = readCookie(req, AUTH_COOKIE) ?? (header?.startsWith("Bearer ") ? header.slice(7) : null);
+
+  if (!token) return res.status(401).json({ error: "Missing token" });
+
   try {
-    const payload = jwt.verify(header.slice(7), JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
     req.userId = payload.userId;
     next();
   } catch {
@@ -161,6 +219,10 @@ authRouter.post("/wallet", async (req, res) => {
     }
 
     const token = signToken(user.id);
+    setAuthCookie(res, token);
+
+    // Still returned in the body. The browser client no longer stores it — it relies on the
+    // cookie — but the CLI scripts have no cookie jar and authenticate with a bearer token.
     return res.json({
       user: {
         id: user.id,
@@ -174,4 +236,14 @@ authRouter.post("/wallet", async (req, res) => {
   } catch {
     return res.status(500).json({ error: "Wallet auth failed" });
   }
+});
+
+// POST /api/auth/logout — clears the session cookie.
+//
+// Needed because the client cannot: an httpOnly cookie is not reachable from JavaScript, which
+// is the whole point. Deliberately not authenticated — logging out with an already-expired or
+// malformed token should still clear the cookie rather than 401 and leave it in place.
+authRouter.post("/logout", (_req, res) => {
+  clearAuthCookie(res);
+  res.json({ ok: true });
 });

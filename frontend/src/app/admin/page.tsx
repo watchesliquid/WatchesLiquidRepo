@@ -21,13 +21,15 @@ import "./admin.css";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "/api";
 
+// Same session as the rest of the app: an httpOnly cookie, sent by credentials:"include".
+// This helper used to read the token out of localStorage — on the one page where a stolen
+// session is worth the most.
 async function adminFetch(path: string, options?: RequestInit) {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const res = await fetch(`${API}/admin${path}`, {
     ...options,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
   });

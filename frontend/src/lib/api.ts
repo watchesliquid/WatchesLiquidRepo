@@ -1,13 +1,22 @@
 const BASE_URL = "/api";
 
+/**
+ * The session lives in an httpOnly cookie, not in localStorage.
+ *
+ * A token in localStorage is readable by any script on the page, so a single XSS — in our code
+ * or in a dependency — walks off with a 7-day session. The cookie is unreachable from
+ * JavaScript, so there is deliberately nothing to read here and nothing to attach by hand.
+ *
+ * `credentials: "include"` is what sends it. BASE_URL is a relative "/api", same-origin in both
+ * environments (nginx in production, the next.config rewrite in development), so the cookie is
+ * SameSite=Strict and no cross-site request can carry it.
+ */
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
   });
@@ -30,6 +39,10 @@ export const api = {
     }),
 
   getMe: () => request<any>("/auth/me"),
+
+  // Clearing the session is a server round trip: the cookie is httpOnly, so the client cannot
+  // delete it itself.
+  logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
 
   // Markets
   getMarkets: () => request<{ markets: any[] }>("/markets"),

@@ -42,17 +42,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [walletInstalled, setWalletInstalled] = useState(false);
   const [wrongChain, setWrongChain] = useState(false);
 
+  // The session is an httpOnly cookie, so there is no token to look for before asking. Just ask:
+  // /auth/me answers from the cookie the browser attaches, and a 401 means no session. Checking
+  // localStorage first was only ever a way to skip a request, and it is the thing we removed.
   const refreshUser = useCallback(async () => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
     try {
       const u = await api.getMe();
       setUser(u);
-    } catch { localStorage.removeItem("token"); }
+    } catch {
+      setUser(null);
+    }
   }, []);
 
+  // The server has to clear the cookie — JavaScript cannot touch an httpOnly one, which is the
+  // point of it. Local state is cleared regardless, so a failed request still logs you out here.
   const logout = useCallback(async () => {
-    localStorage.removeItem("token");
+    try { await api.logout(); } catch {}
     setUser(null);
     try { await disconnectWallet(); } catch {}
   }, []);
@@ -75,8 +80,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const address = await connectWallet(); // also switches/adds the chain
       const { message, signature } = await signAuthMessage(address);
+      // No token stored: /auth/wallet sets the httpOnly cookie on the response.
       const result = await api.walletAuth(address, message, signature);
-      localStorage.setItem("token", result.token);
       setUser(result.user);
       setWrongChain(false);
     } catch (err: any) {
