@@ -2,11 +2,25 @@ import { Router } from "express";
 import { memDb } from "../db/memory";
 import { isMarketPaused } from "../services/audit";
 import { authMiddleware } from "./auth";
-import { calcLiqPrice, computePnl, computeRoe, computeMarginRatio, clampPnl } from "shared/margin";
+import { calcLiqPrice, computePnl, computeRoe, computeMarginRatio, clampPnl, validateTriggerLevels } from "shared/margin";
 import type { Direction } from "shared/types";
 
 export const positionsRouter = Router();
 positionsRouter.use(authMiddleware);
+
+/**
+ * Parse a user-supplied stop-loss / take-profit level.
+ *
+ * Returns null for "not set" (absent, null, or empty string), or NaN for a value that is present
+ * but unusable — callers reject NaN with a 400. The old code did `stopLoss ? String(stopLoss)`,
+ * which stored whatever it was handed: "abc" round-tripped to a NaN threshold that every
+ * comparison in evaluatePosition silently answered false, so the stop just never fired.
+ */
+function parseLevel(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = Number(raw);
+  return isFinite(n) && n > 0 ? n : NaN;
+}
 
 // GET /api/positions
 positionsRouter.get("/", (req: any, res) => {
@@ -93,6 +107,18 @@ positionsRouter.post("/open", (req: any, res) => {
       });
     }
 
+    const stopLossLevel = parseLevel(stopLoss);
+    const takeProfitLevel = parseLevel(takeProfit);
+    if (Number.isNaN(stopLossLevel)) return res.status(400).json({ error: "stopLoss must be a positive price" });
+    if (Number.isNaN(takeProfitLevel)) return res.status(400).json({ error: "takeProfit must be a positive price" });
+    const levelError = validateTriggerLevels({
+      direction: direction as Direction,
+      markPrice: entryPrice,
+      stopLoss: stopLossLevel,
+      takeProfit: takeProfitLevel,
+    });
+    if (levelError) return res.status(400).json({ error: levelError });
+
     const liqPrice = calcLiqPrice(entryPrice, lev, direction as Direction);
 
     // Deduct balance
@@ -111,8 +137,8 @@ positionsRouter.post("/open", (req: any, res) => {
       notional: String(notional),
       entry_price: String(entryPrice),
       liquidation_price: String(liqPrice),
-      stop_loss: stopLoss ? String(stopLoss) : null,
-      take_profit: takeProfit ? String(takeProfit) : null,
+      stop_loss: stopLossLevel !== null ? String(stopLossLevel) : null,
+      take_profit: takeProfitLevel !== null ? String(takeProfitLevel) : null,
       status: "open",
       opened_at: new Date().toISOString(),
       closed_at: null,
@@ -222,9 +248,30 @@ positionsRouter.post("/:id/sl-tp", (req: any, res) => {
     const pos = memDb.positions.find((p: any) => p.id === req.params.id && p.user_id === req.userId);
     if (!pos) return res.status(404).json({ error: "Position not found" });
     if (pos.status !== "open") return res.status(400).json({ error: "Position already closed" });
+    const market = memDb.markets.find((m: any) => m.id === pos.market_id);
+    if (!market) return res.status(400).json({ error: "Market not found" });
+    const markPrice = Number(market.index_price);
+
     const { stopLoss, takeProfit } = req.body;
-    if (stopLoss !== undefined) pos.stop_loss = stopLoss ? String(stopLoss) : null;
-    if (takeProfit !== undefined) pos.take_profit = takeProfit ? String(takeProfit) : null;
+    const stopLossLevel = stopLoss !== undefined ? parseLevel(stopLoss) : null;
+    const takeProfitLevel = takeProfit !== undefined ? parseLevel(takeProfit) : null;
+    if (Number.isNaN(stopLossLevel)) return res.status(400).json({ error: "stopLoss must be a positive price" });
+    if (Number.isNaN(takeProfitLevel)) return res.status(400).json({ error: "takeProfit must be a positive price" });
+
+    // Only the legs actually being set are checked. Validating an untouched leg against the
+    // current mark would reject an unrelated edit whenever the mark had drifted past a level the
+    // risk engine has not yet acted on — an update to the take-profit must not fail because of
+    // the stop-loss that is already on the position.
+    const levelError = validateTriggerLevels({
+      direction: pos.direction as Direction,
+      markPrice,
+      stopLoss: stopLossLevel,
+      takeProfit: takeProfitLevel,
+    });
+    if (levelError) return res.status(400).json({ error: levelError });
+
+    if (stopLoss !== undefined) pos.stop_loss = stopLossLevel !== null ? String(stopLossLevel) : null;
+    if (takeProfit !== undefined) pos.take_profit = takeProfitLevel !== null ? String(takeProfitLevel) : null;
     res.json({ ...pos, stopLoss: pos.stop_loss ? Number(pos.stop_loss) : null, takeProfit: pos.take_profit ? Number(pos.take_profit) : null });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });

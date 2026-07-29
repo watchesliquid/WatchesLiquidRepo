@@ -138,14 +138,16 @@ export function TradePanel({ market }: Props) {
           <input type="number" className="size-input" value={size} onChange={(e) => setSize(Number(e.target.value))} min={MIN_POSITION_SIZE_USD} placeholder="100" />
         </div>
 
+        {/* Hints follow the direction — stop below the mark on a long, above it on a short.
+            The API rejects the wrong side, so a fixed 0.9/1.1 misled every short. */}
         <div className="sltp-row">
           <div>
             <div className="sltp-label">Stop Loss</div>
-            <input type="text" className="sltp-input" placeholder={`$${(price * 0.9).toFixed(0)}`} value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} />
+            <input type="text" className="sltp-input" placeholder={`$${(price * (direction === 'long' ? 0.9 : 1.1)).toFixed(0)}`} value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} />
           </div>
           <div>
             <div className="sltp-label">Take Profit</div>
-            <input type="text" className="sltp-input" placeholder={`$${(price * 1.1).toFixed(0)}`} value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} />
+            <input type="text" className="sltp-input" placeholder={`$${(price * (direction === 'long' ? 1.1 : 0.9)).toFixed(0)}`} value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} />
           </div>
         </div>
 

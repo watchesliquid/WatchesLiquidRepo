@@ -64,6 +64,48 @@ export function clampPnl(pnl: number, collateral: number): number {
 
 export type CloseReason = 'stop_loss' | 'take_profit' | 'profit_cap' | 'liquidation';
 
+/**
+ * Whether an SL/TP pair sits on the correct side of the mark. Returns an error message, or null
+ * if the levels are usable.
+ *
+ * Wrong-side levels are self-harm, not an exploit: closePosition fills at the mark, never at the
+ * requested level, so a take-profit set below market cannot mint value. What it does is
+ * force-close the position on the next 15s risk tick and charge a close fee for a move the user
+ * never asked for. Same for a stop-loss on the wrong side. Neither is ever intentional, so they
+ * are rejected at the door rather than honoured.
+ *
+ * Levels exactly at the mark are rejected too — evaluatePosition triggers on `<=` / `>=`, so an
+ * at-the-mark level fires on the very next tick.
+ *
+ * Note this only constrains the side, not the distance. A long stop below the liquidation price
+ * is allowed: it is inert rather than wrong (liquidation is checked last and wins), and the mark
+ * moves, so today's unreachable stop is tomorrow's live one.
+ */
+export function validateTriggerLevels(params: {
+  direction: Direction;
+  markPrice: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+}): string | null {
+  const { direction, markPrice, stopLoss, takeProfit } = params;
+  const long = direction === 'long';
+  const at = markPrice.toFixed(2);
+
+  if (stopLoss !== null) {
+    if (long && stopLoss >= markPrice) return `Stop-loss must be below the current price of ${at}`;
+    if (!long && stopLoss <= markPrice) return `Stop-loss must be above the current price of ${at}`;
+  }
+
+  if (takeProfit !== null) {
+    if (long && takeProfit <= markPrice) return `Take-profit must be above the current price of ${at}`;
+    if (!long && takeProfit >= markPrice) return `Take-profit must be below the current price of ${at}`;
+  }
+
+  // No stop-vs-target cross-check is needed: the two rules above already force
+  // stopLoss < mark < takeProfit for a long, and the reverse for a short.
+  return null;
+}
+
 /** Whether a position should be force-closed at markPrice, and why. Order matters: liquidation wins. */
 export function evaluatePosition(params: {
   entryPrice: number;

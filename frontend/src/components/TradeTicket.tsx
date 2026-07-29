@@ -203,15 +203,17 @@ export function TradeTicket({ market }: Props) {
           <input type="number" className="size-input" value={size} onChange={(e) => setSize(Number(e.target.value))} min={MIN_POSITION_SIZE_USD} placeholder="$100" />
         </div>
 
-        {/* SL/TP inputs */}
+        {/* SL/TP inputs. The hints follow the direction: a stop is below the mark on a long and
+            above it on a short, and the API now rejects the wrong side outright. Hardcoding
+            0.9/1.1 meant the placeholder on a short suggested a level the server refuses. */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div>
             <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 3, fontWeight: 600 }}>STOP LOSS</div>
-            <input type="text" className="size-input" style={{ fontSize: 11 }} placeholder={`$${(price * 0.9).toFixed(0)}`} value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} />
+            <input type="text" className="size-input" style={{ fontSize: 11 }} placeholder={`$${(price * (direction === 'long' ? 0.9 : 1.1)).toFixed(0)}`} value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} />
           </div>
           <div>
             <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 3, fontWeight: 600 }}>TAKE PROFIT</div>
-            <input type="text" className="size-input" style={{ fontSize: 11 }} placeholder={`$${(price * 1.1).toFixed(0)}`} value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} />
+            <input type="text" className="size-input" style={{ fontSize: 11 }} placeholder={`$${(price * (direction === 'long' ? 1.1 : 0.9)).toFixed(0)}`} value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} />
           </div>
         </div>
 
