@@ -1,6 +1,6 @@
 # Watches Liquid
 
-[![CI](https://github.com/watchesliquid/WatchesLiquid/actions/workflows/ci.yml/badge.svg)](https://github.com/watchesliquid/WatchesLiquid/actions/workflows/ci.yml)
+[![CI](https://github.com/watchesliquid/WatchesLiquidRepo/actions/workflows/ci.yml/badge.svg)](https://github.com/watchesliquid/WatchesLiquidRepo/actions/workflows/ci.yml)
 
 Perpetual futures on luxury watch prices. Long or short a Daytona or a Nautilus
 with leverage, settle in USDG, never take delivery of a watch.

@@ -5,7 +5,7 @@
 Please report privately first. Do not open a public issue for anything that could
 be used to move funds.
 
-- **GitHub:** open a [private security advisory](https://github.com/watchesliquid/WatchesLiquid/security/advisories/new)
+- **GitHub:** open a [private security advisory](https://github.com/watchesliquid/WatchesLiquidRepo/security/advisories/new)
 - **X/Twitter DM:** [@WatchesLiquid](https://x.com/WatchesLiquid)
 
 We aim to acknowledge within 72 hours. Please give us a reasonable window to
