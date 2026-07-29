@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Weekly, so the badge reflects a build that still passes rather than one that passed
+  # whenever someone last pushed.
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  verify:
+    name: Typecheck and rule checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck every workspace
+        run: npm run lint
+
+      # Pure checks — no server, no chain, no database file. Each suite pins one rule that was
+      # previously wrong, so a regression fails the build rather than reaching production.
+      - name: Rule checks
+        run: npm run check
+
+      - name: Build
+        run: npm run build
