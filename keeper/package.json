@@ -18,7 +18,7 @@
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.0",
     "shared": "*",
-    "uuid": "^10.0.0",
+    "uuid": "^14.0.1",
     "viem": "^2.55.2"
   },
   "devDependencies": {
