@@ -6,6 +6,7 @@ import { marketsRouter } from "./routes/markets";
 import { positionsRouter } from "./routes/positions";
 import { accountRouter } from "./routes/account";
 import { leaderboardRouter } from "./routes/leaderboard";
+import { transparencyRouter } from "./routes/transparency";
 import { adminRouter } from "./routes/admin";
 import { seedMemMarkets, memDb, loadDb, startAutoSave, saveDb } from "./db/memory";
 import { scrapeAllMarkets, buildCandles, seedHistoricalCandles, compute24hStats } from "./services/scraper";
@@ -41,6 +42,9 @@ app.use("/api/auth", rateLimit(60_000, 20, "auth"));
 app.use("/api/account/withdraw", rateLimit(60 * 60_000, 10, "wd"));
 app.use("/api/account/deposit/check", rateLimit(60_000, 10, "dep"));
 app.use("/api/positions", rateLimit(60_000, 120, "pos"));
+// Public and unauthenticated, and /reserves reads the chain. The endpoint caches for 30s so a
+// flood cannot turn into RPC load, but cap it anyway — verification does not need 600/min.
+app.use("/api/transparency", rateLimit(60_000, 60, "pub"));
 app.use("/api", rateLimit(60_000, 600, "all"));
 
 app.use("/api/auth", authRouter);
@@ -48,6 +52,7 @@ app.use("/api/markets", marketsRouter);
 app.use("/api/positions", positionsRouter);
 app.use("/api/account", accountRouter);
 app.use("/api/leaderboard", leaderboardRouter);
+app.use("/api/transparency", transparencyRouter);
 app.use("/api/admin", adminRouter);
 
 // Restore persisted data (or seed fresh)
@@ -97,6 +102,25 @@ if (isPlatformConfigured()) {
   setInterval(tick, SCAN_INTERVAL_MS);
   tick();
   console.log(`[deposits] scanning every ${SCAN_INTERVAL_MS / 1000}s`);
+
+  // Re-run reconciliation on a timer, not only at boot. A withdrawal whose receipt was not yet
+  // visible stays `pending` with the user's balance deducted; boot-only meant it sat that way
+  // until someone restarted the process, which on a long-lived box is indistinguishable from
+  // losing the money. Now it clears itself a tick after the receipt appears.
+  //
+  // Guarded against overlap: reconciliation awaits one RPC call per pending row, and a slow RPC
+  // could otherwise start a second pass over rows the first is still deciding — which is exactly
+  // the double-credit this function exists to prevent.
+  const RECONCILE_INTERVAL_MS = Math.max(30_000, parseInt(process.env.WITHDRAW_RECONCILE_MS ?? "120000"));
+  let reconciling = false;
+  setInterval(() => {
+    if (reconciling) return;
+    reconciling = true;
+    reconcilePendingWithdrawals()
+      .catch((err) => console.error("[withdrawals] reconcile failed:", err.message))
+      .finally(() => { reconciling = false; });
+  }, RECONCILE_INTERVAL_MS);
+  console.log(`[withdrawals] reconciling every ${RECONCILE_INTERVAL_MS / 1000}s`);
 } else {
   console.warn("[deposits] PLATFORM_WALLET_KEY not configured — deposit scanning disabled");
 }

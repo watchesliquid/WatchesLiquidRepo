@@ -79,6 +79,52 @@ export function checkWithdrawLimits(user: any, amount: number): LimitVerdict {
  * A txHash with no receipt yet is left pending and re-checked next boot. Guessing there is
  * exactly the double-spend this function exists to prevent.
  */
+export type ReconcileOutcome = "confirmed" | "restored" | "pending" | "not-pending";
+
+/**
+ * Reconcile exactly one pending withdrawal against the chain.
+ *
+ * The caller chooses WHICH withdrawal; the chain decides WHAT happens to it. There is no
+ * parameter for the outcome, the amount or the destination, which is what makes this safe to
+ * expose to support (see POST /admin/withdrawals/recheck). The worst a caller can do is ask a
+ * question that has already been asked.
+ *
+ * Does not save — the caller batches that.
+ */
+export async function reconcileWithdrawal(user: any, w: any): Promise<ReconcileOutcome> {
+  if (w.status !== "pending") return "not-pending";
+
+  if (!w.txHash) {
+    user.balance_usd = String(Number(user.balance_usd) + Number(w.amount));
+    w.status = "failed";
+    w.error = "no txHash — never broadcast (recovered by reconciler)";
+    return "restored";
+  }
+
+  try {
+    const receipt = await publicClient.getTransactionReceipt({ hash: w.txHash });
+    if (receipt.status === "success") {
+      w.status = "confirmed";
+      return "confirmed";
+    }
+    user.balance_usd = String(Number(user.balance_usd) + Number(w.amount));
+    w.status = "reverted";
+    return "restored";
+  } catch {
+    // Not mined yet, or the RPC cannot see it. Leave it pending — never assume.
+    return "pending";
+  }
+}
+
+/**
+ * Sweep every pending withdrawal.
+ *
+ * Runs on boot AND on a timer. Boot-only was not enough: a withdrawal whose receipt was not yet
+ * visible stayed `pending` — with the user's balance still deducted — until somebody happened to
+ * restart the process. On a box that stays up for weeks that is indistinguishable from losing
+ * the money. On a timer it resolves itself within a tick of the receipt appearing, and no
+ * operator has to be involved at all.
+ */
 export async function reconcilePendingWithdrawals(): Promise<void> {
   let restored = 0;
   let confirmed = 0;
@@ -88,35 +134,19 @@ export async function reconcilePendingWithdrawals(): Promise<void> {
     for (const w of user.withdrawals ?? []) {
       if (w.status !== "pending") continue;
 
-      if (!w.txHash) {
-        user.balance_usd = String(Number(user.balance_usd) + Number(w.amount));
-        w.status = "failed";
-        w.error = "no txHash — never broadcast (recovered on boot)";
-        restored++;
-        continue;
-      }
-
-      try {
-        const receipt = await publicClient.getTransactionReceipt({ hash: w.txHash });
-        if (receipt.status === "success") {
-          w.status = "confirmed";
-          confirmed++;
-        } else {
-          user.balance_usd = String(Number(user.balance_usd) + Number(w.amount));
-          w.status = "reverted";
-          restored++;
-        }
-      } catch {
-        // Not mined yet, or the RPC cannot see it. Leave it pending — never assume.
-        stillPending++;
-      }
+      const outcome = await reconcileWithdrawal(user, w);
+      if (outcome === "confirmed") confirmed++;
+      else if (outcome === "restored") restored++;
+      else if (outcome === "pending") stillPending++;
     }
   }
 
-  if (restored || confirmed || stillPending) {
+  if (restored || confirmed) {
     saveDb();
     console.log(
-      `[withdrawals] reconciled on boot: ${confirmed} confirmed, ${restored} restored, ${stillPending} still pending`,
+      `[withdrawals] reconciled: ${confirmed} confirmed, ${restored} restored, ${stillPending} still pending`,
     );
+  } else if (stillPending) {
+    console.log(`[withdrawals] ${stillPending} still pending, no receipt yet`);
   }
 }
