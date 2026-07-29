@@ -1,7 +1,24 @@
 import { Router } from "express";
 import { memDb } from "../db/memory";
+import { activeSourceId } from "../services/price";
 
 export const marketsRouter = Router();
+
+/**
+ * Price provenance, carried on every response that contains a price.
+ *
+ * Structural rather than documentary: a disclosure that lives only in the README or on a docs
+ * page can be dropped by any consumer of this API — an aggregator, a screenshot, a future
+ * frontend — and the numbers then look like real watch prices. Attaching the source to the
+ * payload means anything rendering a price is also holding the fact that it is simulated.
+ */
+function priceProvenance() {
+  const source = activeSourceId();
+  return {
+    priceSource: source,
+    pricesSimulated: source === "simulated",
+  };
+}
 
 // GET /api/markets/stats — protocol-wide aggregates for the home page.
 // MUST be declared before "/:id", or Express matches it as a market with id "stats".
@@ -61,9 +78,10 @@ marketsRouter.get("/", (_req, res) => {
     oracleUpdatedAt: Date.now(),
     oracleConfidence: 0.98,
     isActive: m.is_active !== false,
+    ...priceProvenance(),
   }));
 
-  res.json({ markets: result });
+  res.json({ markets: result, ...priceProvenance() });
 });
 
 // GET /api/markets/:id
@@ -83,6 +101,7 @@ marketsRouter.get("/:id", (req, res) => {
     maxLeverage: m.max_leverage,
     minPositionSize: Number(m.min_position_size),
     feeRate: Number(m.fee_rate),
+    ...priceProvenance(),
   });
 });
 

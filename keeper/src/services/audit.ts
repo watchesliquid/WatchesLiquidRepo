@@ -5,8 +5,16 @@
  * platform the audit log is what turns "money left the wallet" into "this admin moved this
  * amount to this address at this time" — without it, an incident is unreconstructable.
  *
- * The log is append-only by convention and has no delete route. It is deliberately NOT
- * exposed to any non-admin path.
+ * The log is append-only by convention and has no delete route.
+ *
+ * The RAW entry is admin-only — it carries request IPs, full user ids and internal detail
+ * blobs. A redacted projection is published at GET /api/transparency/audit-log so users can
+ * watch admin activity without trusting a summary of it; see publicAuditEntry in
+ * routes/transparency.ts, which allowlists per action rather than redacting per field.
+ *
+ * Consequence worth knowing when adding an action: whatever you put in `detail` is safe by
+ * default (the projection ignores unknown actions), but if you then add a case for it, decide
+ * field by field what belongs in public.
  */
 import { memDb, saveDb } from "../db/memory";
 
