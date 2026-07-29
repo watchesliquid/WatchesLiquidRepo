@@ -1,5 +1,7 @@
 # Watches Liquid
 
+[![CI](https://github.com/watchesliquid/Watches-Liquid/actions/workflows/ci.yml/badge.svg)](https://github.com/watchesliquid/Watches-Liquid/actions/workflows/ci.yml)
+
 Perpetual futures on luxury watch prices. Long or short a Daytona or a Nautilus
 with leverage, settle in USDG, never take delivery of a watch.
 
@@ -15,22 +17,65 @@ Three things about how this works. All three are stated on the live site too.
 **1. Prices are simulated.** There is no live watch price feed. Prices come from
 an internal simulator — an Ornstein-Uhlenbeck walk in log-price, mean-reverting
 to a per-watch anchor, running on a compressed clock where one 30-second tick
-represents one simulated day. `GET /api/admin/health` reports
-`oracle.activeSource` so you can check this without reading code.
-`keeper/src/services/price/watchcharts.ts` is a stub for a real feed that is not
-yet enabled.
+represents one simulated day. Every API response containing a price also carries
+`pricesSimulated`, and `GET /api/transparency/oracle` describes the active
+source in full. `keeper/src/services/price/watchcharts.ts` is a stub for a real
+feed that is not yet enabled — a real one needs a licensed data source, since
+WatchCharts blocks automated access.
 
 **2. It is custodial.** One hot wallet holds all user funds. Your balance is a
 row in a database, not an on-chain position. Trades never touch the chain — only
-deposits and withdrawals do.
+deposits and withdrawals do. If our server is compromised, user funds are at
+risk. This is the largest single risk in the system.
 
-**3. Administrators can move funds.** Allowlisted addresses can send from the hot
-wallet and set balances. This is how support and recovery work. It is capped,
-rate-limited, confirmation-gated and audit-logged, but it is real. See
-[SECURITY.md](SECURITY.md) for the full boundary.
+**3. No API route can move your funds or edit your balance.** The two admin
+routes that could — send-from-wallet and set-balance — have been removed, and a
+test fails the build if either returns. What is left is support, not control:
+stats, pause switches, crediting a deposit that already arrived on-chain, and
+re-checking a stuck withdrawal against the chain. Neither of those last two can
+increase what you are owed beyond what the chain already shows — support can
+resolve a deposit or withdrawal, but cannot decide it.
+
+That is not the same as "your funds are safe". The withdrawal path needs the hot
+wallet key, so it lives on the server, and anyone with access to that machine can
+still move everything. What it rules out is a *remote* path: a stolen admin
+session no longer reaches user funds. See [SECURITY.md](SECURITY.md) for exactly
+where the line falls.
 
 Not affiliated with or endorsed by any watch manufacturer. Markets are
 identified by reference number; no brand logos or press images are used.
+
+---
+
+## Verify it yourself
+
+Three public endpoints, no authentication and no account required. They exist so
+the claims above can be checked rather than believed.
+
+| Endpoint | What it answers |
+|---|---|
+| `GET /api/transparency/reserves` | Does the custody wallet actually hold what users are owed? |
+| `GET /api/transparency/audit-log` | What have administrators done, and where did funds go? |
+| `GET /api/transparency/oracle` | Are prices real or simulated, right now? |
+
+`reserves` publishes the custody wallet address and compares its on-chain USDG
+balance against total user claims — wallet balances, plus collateral locked in
+open positions, plus unrealised profit at the current mark. **Do not trust the
+ratio it prints.** It gives you the address; read the balance yourself on the
+explorer and redo the division.
+
+The liability side is deliberately overstated: unrealised profit counts as owed,
+and the close fee every exit would really pay is not deducted. The coverage
+figure is therefore a floor, not a best case. It can print below 1 — funding is
+not zero-sum on a skewed book, so the house can run a deficit — and it will show
+that rather than hide it.
+
+`audit-log` is the same log administrators see, with request IPs stripped and
+user identifiers truncated. Amounts and withdrawal destinations are **not**
+redacted, because where money went is the entire point of publishing it. Note
+what this is not: the log lives in the same database it describes, so it is
+evidence for users, not a tamper-proof ledger. An attacker holding the server
+holds both.
 
 ---
 
@@ -71,7 +116,11 @@ cold start rather than a cursor carried to a chain where it means nothing.
 
 Dedupe keys on `txHash:logIndex`, never `txHash` alone — a single transaction
 routinely carries multiple USDG transfers to the same address, and keying on the
-hash alone silently drops all but the first.
+hash alone silently drops all but the first. The keys live in
+`keeper/src/db/credited-txs.ts`, which keeps a bounded recent history rather than
+every key ever seen; pruning is disabled when `EVM_START_BLOCK` is set, since that
+is the one setting that legitimately rewinds the cursor over already-credited
+blocks.
 
 Deposits sent from an exchange or contract wallet cannot be attributed to a user
 (the sender is not their address). Those are recorded as unattributed rather than
@@ -139,9 +188,26 @@ in-process, and a second instance would let two workers claim the same nonce.
 
 ```bash
 npm run lint         # typecheck every workspace
+npm run test         # the tests/ suites — pure, no server or chain needed
 npm run test:admin   # admin authorisation boundary, against a local keeper
 npm run test:smoke   # deposit/withdraw guards, moves no funds
 ```
+
+`tests/` holds everything that runs anywhere; `scripts/` holds the ones that need a live keeper.
+
+`test` is pure — no server, no chain, no database file — so it runs anywhere,
+and it runs on every push and pull request via the CI badge at the top. Each of
+its five suites pins one rule that was previously wrong, or one that must not
+break:
+
+- trigger levels must sit on the correct side of the mark
+- a deposit may be credited exactly once, however often it is rescanned
+- every block in the scan range is visited exactly once
+- a signed auth message is redeemable exactly once
+- the public audit log never emits a request IP, a full user id or a user wallet
+  address — including for admin actions added after the test was written
+- no admin route can move funds or create a balance, and none may be added
+  without being explicitly allowlisted in the test
 
 `test:smoke` targets `http://localhost:3001/api` by default. Set `SMOKE_API` to
 point it at a running deployment.
@@ -169,6 +235,9 @@ scripts/    test suites
 | `keeper/src/services/deposits.ts` | Transfer log scanner and block cursor |
 | `keeper/src/middleware/require-admin.ts` | Admin allowlist — fails closed |
 | `keeper/src/db/memory.ts` | The database. `loadDb` only restores keys present in the `memDb` literal |
+| `keeper/src/db/credited-txs.ts` | Deposit dedupe keys — membership and retention |
+| `keeper/src/services/auth-replay.ts` | Makes each signed auth message single-use |
+| `keeper/src/routes/transparency.ts` | Public proof of reserves, redacted audit log, oracle status |
 
 ### Things that bite on EVM
 
