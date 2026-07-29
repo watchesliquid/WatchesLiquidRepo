@@ -1,0 +1,19 @@
+version: 2
+
+# Dependencies are supply-chain surface on a box that holds a hot wallet key, which is why this
+# repo has so few of them. The ones that remain should not go stale silently.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for routine patches rather than five. Majors stay separate so they get read.
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

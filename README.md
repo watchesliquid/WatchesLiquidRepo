@@ -8,6 +8,8 @@ with leverage, settle in USDG, never take delivery of a watch.
 This repository is published so the system can be audited. If you find
 something that can move funds, please read [SECURITY.md](SECURITY.md) first.
 
+[Architecture](ARCHITECTURE.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+
 ---
 
 ## Read this before you deposit

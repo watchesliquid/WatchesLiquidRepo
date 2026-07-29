@@ -36,3 +36,10 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # Advisory, not blocking: a transitive advisory published overnight should not turn the
+      # badge red on a commit that changed nothing. It surfaces in the log where someone reading
+      # a run will see it, and Dependabot opens the PR that actually fixes it.
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
