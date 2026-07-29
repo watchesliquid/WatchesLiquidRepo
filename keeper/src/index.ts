@@ -13,7 +13,7 @@ import { scrapeAllMarkets, buildCandles, seedHistoricalCandles, compute24hStats 
 import { runLiquidationCheck } from "./services/risk-engine";
 import { settleFunding } from "./services/funding";
 import { scanDeposits } from "./services/deposits";
-import { getChainConfig, getPlatformAddress, isPlatformConfigured } from "./services/evm";
+import { getChainConfig, getPlatformAddress, isPlatformConfigured, verifyRpcEndpoints } from "./services/evm";
 import { reconcilePendingWithdrawals } from "./services/withdrawals";
 import { rateLimit } from "./middleware/rate-limit";
 
@@ -34,6 +34,20 @@ app.use(express.json({ limit: "32kb" }));
 // nginx sets X-Forwarded-For; without this express reports the proxy IP for every client and
 // the rate limiter would bucket the entire internet together.
 app.set("trust proxy", 1);
+
+// Response hardening. Hand-rolled rather than pulling in helmet — four headers against one more
+// dependency on a box that holds a hot wallet key.
+//
+// These matter more now that the session is an httpOnly cookie: the cookie cannot be read by a
+// script, but a page that can be framed or that sniffs a response into executable script is
+// still a way to act as the user.
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY"); // no framing a leveraged-trading UI
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()");
+  next();
+});
 
 // Rate limits, tightest on the paths that move money or mint accounts. There were none before
 // enabling the real rail — auth is only a wallet signature, so an unthrottled /wallet endpoint
@@ -83,6 +97,14 @@ setInterval(() => {
 // `${txHash}:${logIndex}`, and the block cursor lives in memDb.chainState so a restart resumes
 // rather than skipping whatever arrived while we were down.
 if (isPlatformConfigured()) {
+  // Fail closed on a misconfigured failover endpoint before anything reads the chain. An RPC
+  // serving a different chain would let the scanner walk a foreign block height and credit
+  // nothing while looking healthy.
+  verifyRpcEndpoints().catch((err) => {
+    console.error("[evm]", err.message);
+    process.exit(1);
+  });
+
   // Resolve withdrawals left `pending` by a crash BEFORE the deposit loop starts, so the
   // recovered balances are correct from the first tick rather than a minute in.
   reconcilePendingWithdrawals().catch((err) =>

@@ -126,6 +126,14 @@ Deposits sent from an exchange or contract wallet cannot be attributed to a user
 (the sender is not their address). Those are recorded as unattributed rather than
 lost, and can be credited manually.
 
+Set `EVM_RPC_FALLBACKS` to a comma-separated list of failover endpoints. With a
+single RPC, an outage stops deposit scanning and withdrawal reconciliation at
+once — and stops them *quietly*, because a failed scan is safe by design, so the
+keeper stays healthy and simply stops seeing deposits. Every configured endpoint
+is checked against `EVM_CHAIN_ID` at boot and the process refuses to start on a
+mismatch: failing over onto the wrong chain would scan foreign blocks and credit
+nobody.
+
 ### Margin
 
 All margin math is in `shared/src/margin.ts`. One rule:

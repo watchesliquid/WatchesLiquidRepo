@@ -9,6 +9,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  fallback,
   getContract,
   parseUnits,
   formatUnits,
@@ -37,6 +38,29 @@ const cfg: ChainConfig = {
   usdgAddress: normalizeAddress(process.env.USDG_ADDRESS || cfgBase.usdgAddress),
 };
 
+/**
+ * Every RPC endpoint to try, in order. First is primary; the rest are failover.
+ *
+ * There was only ever one. A single unreachable endpoint stopped deposit scanning, withdrawal
+ * reconciliation and the reserves figure at once — and because a failed scan is safe by design
+ * (the cursor only advances on success), the failure was silent: the keeper looked alive and
+ * simply stopped seeing deposits.
+ *
+ * Set EVM_RPC_FALLBACKS to a comma-separated list. Duplicates of the primary are dropped so a
+ * copy-pasted value cannot produce a "fallback" that fails with it.
+ */
+const RPC_URLS: string[] = (() => {
+  const extra = (process.env.EVM_RPC_FALLBACKS ?? "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+  return [...new Set([cfg.rpcUrl, ...extra])];
+})();
+
+export function getRpcUrls(): string[] {
+  return [...RPC_URLS];
+}
+
 const PLATFORM_KEY = process.env.PLATFORM_WALLET_KEY ?? "";
 
 export function getChainConfig(): ChainConfig {
@@ -47,14 +71,59 @@ const chain = defineChain({
   id: cfg.chainId,
   name: cfg.name,
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: [cfg.rpcUrl] } },
+  rpcUrls: { default: { http: RPC_URLS } },
   blockExplorers: { default: { name: "Explorer", url: cfg.explorerUrl } },
   testnet: cfg.isTestnet,
 });
 
 // http() only — never webSocket(). The ws transport drags in optional native peers
 // (bufferutil, utf-8-validate) that the single-file esbuild bundle cannot resolve.
-export const publicClient = createPublicClient({ chain, transport: http(cfg.rpcUrl) });
+//
+// fallback() moves to the next endpoint when one errors, and `rank: false` keeps them in the
+// order given rather than reordering by observed latency — the primary is primary because an
+// operator said so, and silent reordering makes "which node answered?" unanswerable during an
+// incident. With one URL configured this behaves exactly as the single transport did.
+function transport() {
+  return fallback(
+    RPC_URLS.map((url) => http(url, { retryCount: 2, timeout: 10_000 })),
+    { rank: false },
+  );
+}
+
+export const publicClient = createPublicClient({ chain, transport: transport() });
+
+/**
+ * Confirm every configured endpoint really serves the chain we think it does.
+ *
+ * A fallback pointing at the wrong network is worse than having no fallback: reads would silently
+ * resolve against another chain the moment the primary hiccups, so the deposit scanner would walk
+ * a foreign block height and credit nothing while looking healthy. The USDG contract address does
+ * not even exist there.
+ *
+ * Fails closed, like getUsdgDecimals: a mismatch throws at boot rather than being discovered by a
+ * missing deposit. Called from index.ts before the scan loop starts.
+ */
+export async function verifyRpcEndpoints(): Promise<void> {
+  for (const url of RPC_URLS) {
+    const probe = createPublicClient({ chain, transport: http(url, { retryCount: 1, timeout: 10_000 }) });
+    let id: number;
+    try {
+      id = await probe.getChainId();
+    } catch (err) {
+      // Unreachable is not fatal when it is a spare — that is what a spare is for. A dead
+      // PRIMARY is also survivable now, which is the entire point of the list.
+      console.warn(`[evm] RPC unreachable at boot: ${url} (${(err as Error).message})`);
+      continue;
+    }
+    if (id !== cfg.chainId) {
+      throw new Error(
+        `RPC ${url} reports chain ${id}, expected ${cfg.chainId} (${cfg.name}). Refusing to ` +
+          "start: a failover onto the wrong chain scans foreign blocks and credits nothing.",
+      );
+    }
+  }
+  console.log(`[evm] ${RPC_URLS.length} RPC endpoint(s) verified on chain ${cfg.chainId}`);
+}
 
 let _account: ReturnType<typeof privateKeyToAccount> | null = null;
 function account() {
@@ -67,8 +136,10 @@ function account() {
   return _account;
 }
 
+// Same failover as reads. viem checks the chain id before signing, so a wrong-chain endpoint
+// throws here rather than broadcasting a transfer onto the wrong network.
 function walletClient() {
-  return createWalletClient({ account: account(), chain, transport: http(cfg.rpcUrl) });
+  return createWalletClient({ account: account(), chain, transport: transport() });
 }
 
 const usdg = () =>
