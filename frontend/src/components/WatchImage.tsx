@@ -34,6 +34,17 @@ const DIAL_OVERRIDE: Record<string, Partial<{ bezel: string; dial: string; fg: s
   'tudor-pelagos-39': { bezel: '#1E2A38', dial: '#0F1620', fg: '#ffffff' },
 };
 
+/**
+ * The resolved palette for a market. Exported because the share card redraws the same dial on a
+ * canvas rather than in the DOM, and a card whose colours drifted from the app's would look like
+ * a forgery of its own platform.
+ */
+export function watchPalette(marketId: string): { bezel: string; dial: string; fg: string } {
+  const market = getMarketById(marketId);
+  const base = market ? BRAND_STYLE[market.category] : BRAND_STYLE.haute;
+  return { ...base, ...(DIAL_OVERRIDE[marketId] ?? {}) };
+}
+
 interface Props { marketId: string; size?: number; className?: string; bare?: boolean }
 
 export function WatchImage({ marketId, size = 36, className, bare = false }: Props) {

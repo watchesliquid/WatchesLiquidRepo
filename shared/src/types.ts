@@ -131,6 +131,10 @@ export interface LeaderboardEntry {
 export interface User {
   id: string;
   email: string;
+  /** Chosen display name, or null if never set. Lowercase, unique case-insensitively. */
+  username?: string | null;
+  /** What to render: the username when set, else a truncated-uuid pseudonym. Never the address. */
+  displayName?: string;
   balanceUsd: number;
   createdAt: number;
 }

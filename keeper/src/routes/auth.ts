@@ -1,8 +1,9 @@
 import { Router } from "express";
 import jwt from "jsonwebtoken";
-import { memDb } from "../db/memory";
+import { memDb, saveDb } from "../db/memory";
 import { verifySignature, getChainConfig } from "../services/evm";
 import { checkAuthFreshness, consumeAuthMessage } from "../services/auth-replay";
+import { claimUsername, displayName } from "../services/username";
 import { AUTH_PREFIX, normalizeAddress, isValidAddressFormat } from "shared/chain";
 import { SIGNUP_BALANCE_USD } from "shared/constants";
 
@@ -153,9 +154,26 @@ authRouter.get("/me", authMiddleware, (req: any, res) => {
     id: user.id,
     email: user.email,
     publicKey: user.public_key ?? null,
+    username: user.username ?? null,
+    displayName: displayName(user),
     balanceUsd: Number(user.balance_usd),
     createdAt: user.created_at,
   });
+});
+
+// PUT /api/auth/username — set the display name used on share cards and the leaderboard.
+//
+// The claim is synchronous (see services/username.ts): checking "is it taken?" and writing it
+// must not be separated by an await, or two requests both see it free and both take it.
+authRouter.put("/username", authMiddleware, (req: any, res) => {
+  const user = memDb.users.find((u: any) => u.id === req.userId);
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const result = claimUsername(memDb.users, user, req.body?.username);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+
+  saveDb();
+  return res.json({ username: result.username, displayName: result.username });
 });
 
 // POST /api/auth/wallet — authenticate with wallet signature

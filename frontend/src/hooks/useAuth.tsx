@@ -18,6 +18,10 @@ interface User {
   id: string;
   email: string;
   publicKey: string | null;
+  /** Chosen display name, or null if never set. */
+  username?: string | null;
+  /** What to render: the username when set, else a truncated-uuid pseudonym. Never the address. */
+  displayName?: string;
   balanceUsd: number;
   createdAt: number;
 }

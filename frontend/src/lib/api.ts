@@ -57,6 +57,13 @@ export const api = {
     return request<{ candles: any[] }>(`/markets/${marketId}/candles?${params}`);
   },
 
+  // Display name shown on share cards and the leaderboard.
+  setUsername: (username: string) =>
+    request<{ username: string; displayName: string }>("/auth/username", {
+      method: "PUT",
+      body: JSON.stringify({ username }),
+    }),
+
   // Positions
   getPositions: () => request<{ positions: any[] }>("/positions"),
 

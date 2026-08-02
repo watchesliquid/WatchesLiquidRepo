@@ -1,13 +1,15 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { SharePnlCard, type SharePosition } from "@/components/SharePnlCard";
 
 export default function PortfolioPage() {
   const { user } = useAuth();
+  const [sharing, setSharing] = useState<SharePosition | null>(null);
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -180,6 +182,24 @@ export default function PortfolioPage() {
                     </div>
                   </div>
                   <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSharing({
+                        marketId: p.marketId,
+                        direction: p.direction,
+                        leverage: p.leverage,
+                        entryPrice: p.entryPrice,
+                        exitPrice: p.markPrice,
+                        collateral: p.collateral,
+                        pnl,
+                        settled: false,
+                      });
+                    }}
+                    className="btn" style={{ padding: '5px 10px', fontSize: 10 }}
+                  >
+                    Share
+                  </button>
+                  <button
                     onClick={(e) => { e.stopPropagation(); closePos.mutate(p.id); }}
                     disabled={closePos.isPending}
                     className="btn btn-danger" style={{ padding: '5px 10px', fontSize: 10 }}
@@ -238,6 +258,14 @@ export default function PortfolioPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {sharing && (
+        <SharePnlCard
+          position={sharing}
+          displayName={user?.displayName ?? user?.username ?? String(user?.id ?? "").slice(0, 8)}
+          onClose={() => setSharing(null)}
+        />
       )}
     </div>
   );

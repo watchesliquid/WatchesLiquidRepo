@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { memDb } from "../db/memory";
+import { displayName } from "../services/username";
 
 export const leaderboardRouter = Router();
 
@@ -51,9 +52,11 @@ leaderboardRouter.get("/", (req, res) => {
 
       return {
         rank: i + 1,
-        // A stable pseudonym, not the internal id. The raw userId was the join key for anything
-        // else that leaks per-user data later; there is no reason a public board needs it.
-        trader: `${userId.slice(0, 8)}`,
+        // A chosen username if there is one, else the same truncated-uuid pseudonym as before.
+        // Never the raw userId: it is the join key for anything else that leaks per-user data
+        // later, and a public board has no use for it. displayName() is also what share cards
+        // render, so an identity means the same thing wherever it appears.
+        trader: displayName(memDb.users.find((u: any) => u.id === userId)) || userId.slice(0, 8),
         pnl: data.pnl,
         roi,
         winRate,

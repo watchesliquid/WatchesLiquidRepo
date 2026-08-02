@@ -7,11 +7,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { isValidAddressFormat } from "shared/chain";
 
 export default function ProfilePage() {
-  const { user, loginWithWallet, walletInstalled, wrongChain, chainName, switchChain, logout } = useAuth();
+  const { user, loginWithWallet, walletInstalled, wrongChain, chainName, switchChain, logout, refreshUser } = useAuth();
   const queryClient = useQueryClient();
   const [withdrawAddr, setWithdrawAddr] = useState("");
   const [withdrawAmt, setWithdrawAmt] = useState("");
   const [copied, setCopied] = useState(false);
+  const [username, setUsername] = useState("");
+  const [nameMsg, setNameMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const { data: depositAddr } = useQuery({
     queryKey: ["deposit-address"],
@@ -113,6 +115,47 @@ export default function ProfilePage() {
             {chainName}
           </div>
         </div>
+      </div>
+
+      {/* Display name — what appears on share cards and the leaderboard. Never the address. */}
+      <div className="stat-card" style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Display Name</div>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+          Shown on the leaderboard and on shared PnL cards. Without one you appear as{' '}
+          <span className="mono">{String(user.id).slice(0, 8)}</span>. Lowercase letters, numbers
+          and underscores, 3–20 characters.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input
+            value={username}
+            onChange={(e) => { setUsername(e.target.value.toLowerCase()); setNameMsg(null); }}
+            placeholder={user.username ?? 'yourname'}
+            maxLength={20}
+            type="text" className="size-input mono"
+            style={{ flex: 1, minWidth: 180 }}
+          />
+          <button
+            onClick={async () => {
+              setNameMsg(null);
+              try {
+                await api.setUsername(username.trim());
+                await refreshUser();
+                setNameMsg({ ok: true, text: 'Display name saved' });
+              } catch (err: any) {
+                setNameMsg({ ok: false, text: err?.message ?? 'Could not save that name' });
+              }
+            }}
+            disabled={username.trim().length < 3}
+            className="btn btn-primary"
+          >
+            Save
+          </button>
+        </div>
+        {nameMsg && (
+          <div style={{ fontSize: 11, marginTop: 8, color: nameMsg.ok ? 'var(--green)' : 'var(--red)' }}>
+            {nameMsg.text}
+          </div>
+        )}
       </div>
 
       {/* Deposit */}
