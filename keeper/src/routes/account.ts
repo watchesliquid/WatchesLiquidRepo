@@ -165,7 +165,30 @@ accountRouter.post("/withdraw", async (req: any, res) => {
 
     // Gas pre-flight. An unfunded platform wallet fails every send, so refuse before broadcasting
     // — but the balance is already reserved, so release it explicitly on this path.
-    const gas = await getGasBalance(getPlatformAddress());
+    //
+    // The read itself can throw, and does: this is an RPC call, and the single configured
+    // endpoint has been observed returning 429 and timing out upstream. Without this catch the
+    // throw lands in the route's outer catch, which does NOT restore the balance — leaving the
+    // user debited against a `pending` row with no txHash. The reconciler does recover that row,
+    // but only on its next pass, so an RPC hiccup silently took the money for up to
+    // WITHDRAW_RECONCILE_MS. Worse, before that sweep ran on a timer it was boot-only, so the
+    // balance sat debited until someone restarted the process.
+    //
+    // Restoring here is unambiguously safe in a way it is NOT after sendUsdg: nothing has been
+    // broadcast yet, so there is no transaction this could refund on top of.
+    let gas: number;
+    try {
+      gas = await getGasBalance(getPlatformAddress());
+    } catch (gasErr: any) {
+      user.balance_usd = String(Number(user.balance_usd) + amount);
+      record.status = "failed";
+      record.error = `gas pre-flight failed: ${gasErr.message}`;
+      saveDb();
+      (user as any)._withdrawing = false;
+      console.error("[withdraw] gas pre-flight failed, nothing broadcast, reservation released:", gasErr.message);
+      return res.status(503).json({ error: "Withdrawals temporarily unavailable (chain unreachable)" });
+    }
+
     if (gas < MIN_GAS_ETH) {
       user.balance_usd = String(Number(user.balance_usd) + amount);
       record.status = "failed";
