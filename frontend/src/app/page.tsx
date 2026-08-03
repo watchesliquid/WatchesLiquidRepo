@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Icon, SocialIcon } from "@/components/Icons";
 import { WatchImage } from "@/components/WatchImage";
+import { ContractAddress } from "@/components/ContractAddress";
 import { usd, pct } from "@/lib/format";
 import { SOCIALS } from "@/lib/socials";
 import { MAX_LEVERAGE, OPEN_FEE_RATE, CLOSE_FEE_RATE } from "shared/constants";
@@ -261,6 +262,10 @@ export default function LandingPage() {
                 </a>
               ))}
             </div>
+            {/* The CA lives here rather than in the hero: people look for it when they are
+                checking the project is what it says, and it is the one place a fake site cannot
+                copy without pointing at a contract that fails verification on the explorer. */}
+            <ContractAddress />
           </div>
 
           <div className="lp-footer-cols">

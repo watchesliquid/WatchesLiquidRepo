@@ -119,3 +119,8 @@ export function buildAuthMessage(address: string, chainId: number, timestamp: nu
 export function txUrl(cfg: ChainConfig, txHash: string): string {
   return `${cfg.explorerUrl}/tx/${txHash}`;
 }
+
+/** Blockscout's token page — holders, transfers and supply, which /address does not surface. */
+export function tokenUrl(cfg: ChainConfig, address: string): string {
+  return `${cfg.explorerUrl}/token/${address}`;
+}
