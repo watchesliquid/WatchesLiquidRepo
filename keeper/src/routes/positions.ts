@@ -63,6 +63,51 @@ positionsRouter.get("/", (req: any, res) => {
   res.json({ positions: result });
 });
 
+// GET /api/positions/history — settled positions, newest first.
+//
+// GET "/" deliberately returns only open positions, so a closed one was unreachable from the
+// client: the trade history table shows individual legs, which carry an exit price but not the
+// entry it should be measured against. That is everything a settled PnL card needs, so it could
+// not be built from what was exposed.
+//
+// Declared before any "/:id" route for the same reason markets.ts declares "/stats" first — a
+// parameterised route would otherwise match this as a position with the id "history".
+positionsRouter.get("/history", (req: any, res) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+  const settled = memDb.positions
+    .filter((p: any) => p.user_id === req.userId && p.status !== "open")
+    .sort((a: any, b: any) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime())
+    .slice(0, limit);
+
+  const result = settled.map((p: any) => {
+    const entryPrice = Number(p.entry_price);
+    // A liquidation still records the price it closed at; fall back to entry only if a row
+    // somehow has none, so the card renders a 0% move rather than "$NaN".
+    const closePrice = p.close_price !== null && p.close_price !== undefined ? Number(p.close_price) : entryPrice;
+    const pnl = Number(p.pnl);
+
+    return {
+      id: p.id,
+      marketId: p.market_id,
+      direction: p.direction,
+      collateral: Number(p.collateral),
+      leverage: p.leverage,
+      notional: Number(p.notional),
+      entryPrice,
+      closePrice,
+      // Realised, not floating — the mark has moved on since and is irrelevant to a settled row.
+      pnl,
+      roe: computeRoe(pnl, Number(p.collateral)),
+      status: p.status, // "closed" or "liquidated" — the UI distinguishes them
+      openedAt: p.opened_at,
+      closedAt: p.closed_at,
+    };
+  });
+
+  res.json({ positions: result });
+});
+
 // POST /api/positions/open
 positionsRouter.post("/open", (req: any, res) => {
   try {

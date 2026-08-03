@@ -67,6 +67,10 @@ export const api = {
   // Positions
   getPositions: () => request<{ positions: any[] }>("/positions"),
 
+  /** Settled positions (closed and liquidated). getPositions returns only open ones. */
+  getPositionHistory: (limit = 50) =>
+    request<{ positions: any[] }>(`/positions/history?limit=${limit}`),
+
   openPosition: (body: {
     marketId: string;
     direction: string;

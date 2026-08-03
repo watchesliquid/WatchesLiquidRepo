@@ -21,12 +21,23 @@ export default function PortfolioPage() {
     queryKey: ["trades"], queryFn: () => api.getTradeHistory(50),
     enabled: !!user,
   });
+  const { data: historyData } = useQuery({
+    queryKey: ["position-history"], queryFn: () => api.getPositionHistory(50),
+    enabled: !!user,
+  });
   const closePos = useMutation({
     mutationFn: (id: string) => api.closePosition(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["positions"] }); queryClient.invalidateQueries({ queryKey: ["me"] }); },
+    // position-history too, or the row just closed does not appear below until a refresh.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["positions"] });
+      queryClient.invalidateQueries({ queryKey: ["position-history"] });
+      queryClient.invalidateQueries({ queryKey: ["trades"] });
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 
   const positions = positionsData?.positions ?? [];
+  const closed = historyData?.positions ?? [];
   const trades = tradesData?.trades ?? [];
   const totalPnl = positions.reduce((s: number, p: any) => s + (p.unrealizedPnl ?? 0), 0);
   const usedMargin = positions.reduce((s: number, p: any) => s + (p.collateral ?? 0), 0);
@@ -229,6 +240,79 @@ export default function PortfolioPage() {
             );
           })}
         </div>
+      )}
+
+      {/* Closed positions. Separate from Trade History below, which lists individual legs:
+          a settled PnL card needs entry AND exit on one row, which only a position has. */}
+      {closed.length > 0 && (
+        <>
+          <h2 style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 10 }}>
+            Closed Positions
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
+            {closed.map((p: any) => {
+              const pnl = p.pnl ?? 0;
+              const roe = p.roe ?? 0;
+              const liquidated = p.status === 'liquidated';
+              return (
+                // A div for the same reason the open rows are — see the comment above.
+                <div
+                  key={p.id}
+                  onClick={() => router.push(`/trade?market=${p.marketId}`)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/trade?market=${p.marketId}`); }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className="mkt-card"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', opacity: 0.85 }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span className={`pos-badge ${p.direction}`}>{p.direction.toUpperCase()} {p.leverage}x</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>
+                        {p.marketId?.replace(/-/g, ' ').toUpperCase()}
+                        {liquidated && <span className="text-red" style={{ fontSize: 10, marginLeft: 6 }}>LIQUIDATED</span>}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+                        Entry ${p.entryPrice?.toFixed(2)} → Exit ${p.closePrice?.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div>
+                      <div className={`mono ${pnl >= 0 ? 'text-green' : 'text-red'}`} style={{ fontSize: 14, fontWeight: 700 }}>
+                        {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                      </div>
+                      <div className={`${roe >= 0 ? 'text-green' : 'text-red'}`} style={{ fontSize: 10, fontWeight: 600 }}>
+                        {roe >= 0 ? '+' : ''}{roe.toFixed(2)}%
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSharing({
+                          marketId: p.marketId,
+                          direction: p.direction,
+                          leverage: p.leverage,
+                          entryPrice: p.entryPrice,
+                          exitPrice: p.closePrice,
+                          collateral: p.collateral,
+                          pnl,
+                          settled: true,
+                        });
+                      }}
+                      className="btn" style={{ padding: '5px 10px', fontSize: 10 }}
+                    >
+                      Share
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       <h2 style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 10 }}>
