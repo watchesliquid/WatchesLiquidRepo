@@ -32,7 +32,15 @@ const GREEN = "#22c55e";
 const RED = "#ef4444";
 
 export interface PnlCardData {
-  brand: string;
+  /**
+   * The logo lockup, drawn two-tone exactly as the app header renders it: "Watches" in the
+   * foreground colour, "Liquid" in the accent. Split rather than one string so the card cannot
+   * drift into a flat wordmark the product does not use anywhere else.
+   */
+  brandLead: string;
+  brandTail: string;
+  /** The app's --accent. Passed in rather than hardcoded so the two cannot diverge. */
+  brandTailColor: string;
   site: string;
   displayName: string;
   /** Leads the identity block — the platform identifies markets by reference on purpose. */
@@ -85,9 +93,11 @@ export function drawPnlCard(ctx: CanvasRenderingContext2D, d: PnlCardData): void
   ctx.fillRect(0, 0, CARD_W, CARD_H);
 
   // ── header ──
-  ctx.fillStyle = "#ffffff";
   ctx.font = `700 26px ${SANS}`;
-  ctx.fillText(d.brand, 64, 74);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(d.brandLead, 64, 74);
+  ctx.fillStyle = d.brandTailColor;
+  ctx.fillText(d.brandTail, 64 + ctx.measureText(d.brandLead).width, 74);
 
   ctx.fillStyle = "#8b949e";
   ctx.font = `500 18px ${SANS}`;

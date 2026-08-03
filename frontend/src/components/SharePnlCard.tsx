@@ -13,8 +13,25 @@ import { getMarketById } from "shared/markets";
 import { watchPalette, IMG_VERSION as WATCH_IMG_VERSION } from "./WatchImage";
 import { drawPnlCard, CARD_W, CARD_H, CARD_SCALE } from "@/lib/pnl-card";
 
-/** The UI still brands itself watchperps while the domain is separate. One place to change it. */
-const BRAND = "WATCHPERPS";
+/**
+ * The logo lockup, matching the app header and the landing page: "Watches" then "Liquid" in the
+ * accent. An earlier version of this card said WATCHPERPS, following a note in the project guide
+ * that the UI had not been rebranded yet — that note was stale. Every other surface (the page
+ * title, the header, the footer, admin, the docs, the X handle) says Watches Liquid.
+ */
+const BRAND_LEAD = "WATCHES";
+const BRAND_TAIL = "LIQUID";
+
+/**
+ * Read --accent off the document rather than repeating the hex, so the card's wordmark tracks a
+ * theme change automatically. The fallback is the current value, for any context where the
+ * stylesheet has not applied.
+ */
+function accentColor(): string {
+  if (typeof window === "undefined") return "#e1ff00";
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  return v || "#e1ff00";
+}
 
 /**
  * The domain is read off the browser rather than hardcoded. The card is only ever drawn on the
@@ -78,7 +95,9 @@ export function SharePnlCard({ position, displayName, onClose }: Props) {
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
     drawPnlCard(ctx, {
-      brand: BRAND,
+      brandLead: BRAND_LEAD,
+      brandTail: BRAND_TAIL,
+      brandTailColor: accentColor(),
       site: siteName(),
       displayName,
       referenceNumber: market?.referenceNumber ?? position.marketId.toUpperCase(),
@@ -109,7 +128,7 @@ export function SharePnlCard({ position, displayName, onClose }: Props) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${BRAND.toLowerCase()}-${position.marketId}-${position.direction}.png`;
+      a.download = `${(BRAND_LEAD + BRAND_TAIL).toLowerCase()}-${position.marketId}-${position.direction}.png`;
       a.click();
       URL.revokeObjectURL(url);
       setStatus("Image saved");

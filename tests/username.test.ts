@@ -133,6 +133,18 @@ check("an ordinary name containing 'team' is fine", ok("teamplayer"), true);
   // them as if their absence were the regression — the decision is recorded in CLAUDE.md and in
   // the header of pnl-card.ts.
   check("amounts can be withheld", /showAmounts/.test(both), true);
+
+  // The wordmark must match the app header. It did not: the card shipped "WATCHPERPS", taken
+  // from a note in the project guide claiming the UI had not been rebranded, which was stale by
+  // then. The card is the one surface where a wrong wordmark travels off the site.
+  const shell = readFileSync(join(frontend, "components", "AppShell.tsx"), "utf-8");
+  const logo = shell.match(/<span>([^<]+)<\/span>\s*<span className="dot">([^<]+)<\/span>/);
+  check("the app header has a two-part logo", !!logo, true);
+  if (logo) {
+    const lead = (modal.match(/BRAND_LEAD\s*=\s*"([^"]+)"/) ?? [])[1] ?? "";
+    const tail = (modal.match(/BRAND_TAIL\s*=\s*"([^"]+)"/) ?? [])[1] ?? "";
+    check("the card wordmark matches the header", [lead.toLowerCase(), tail.toLowerCase()], [logo[1].toLowerCase(), logo[2].toLowerCase()]);
+  }
   // An open position's number is not booked profit and must not read as if it were.
   check("unrealised is labelled as such", /UNREALISED/.test(draw), true);
   // The drawing must stay renderable outside React, which is what makes it visually verifiable.
