@@ -15,7 +15,7 @@
     "lint": "npm run lint --workspace=shared && npm run lint --workspace=keeper && npm run lint --workspace=frontend",
     "test:admin": "tsx scripts/admin-check.ts",
     "test:smoke": "tsx scripts/mainnet-smoke.ts",
-    "check": "tsx tests/sltp.test.ts && tsx tests/dedupe.test.ts && tsx tests/scan-window.test.ts && tsx tests/replay.test.ts && tsx tests/transparency.test.ts && tsx tests/admin-surface.test.ts && tsx tests/session.test.ts && tsx tests/durability.test.ts && tsx tests/audit-fixes.test.ts && tsx tests/username.test.ts",
+    "check": "tsx tests/sltp.test.ts && tsx tests/dedupe.test.ts && tsx tests/scan-window.test.ts && tsx tests/replay.test.ts && tsx tests/transparency.test.ts && tsx tests/admin-surface.test.ts && tsx tests/session.test.ts && tsx tests/durability.test.ts && tsx tests/audit-fixes.test.ts && tsx tests/username.test.ts && tsx tests/interactive-nesting.test.ts",
     "test": "npm run check"
   },
   "engines": {

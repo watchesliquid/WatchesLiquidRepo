@@ -157,9 +157,27 @@ export default function PortfolioPage() {
             const pnl = p.unrealizedPnl ?? 0;
             const roe = p.collateral ? (pnl / p.collateral) * 100 : 0;
             return (
-              <button
+              // A DIV, not a button — and it must stay one.
+              //
+              // This row contains Share and Close buttons, and HTML forbids interactive content
+              // inside a <button>. When it was one, the page's prerendered HTML contained nested
+              // buttons; the browser's parser is required to close the outer one early, so the
+              // action buttons were reparented into siblings and the DOM no longer matched what
+              // React expected. Hydration then bound handlers to the wrong nodes, and clicking
+              // Close on one position ran a different row's navigate — which is why it opened
+              // the trade page for an unrelated watch instead of closing anything.
+              //
+              // stopPropagation on the inner buttons could never have fixed that: the handler
+              // that fired was not the one attached to the element being clicked.
+              <div
                 key={p.id}
                 onClick={() => router.push(`/trade?market=${p.marketId}`)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return; // let the real buttons handle their own keys
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/trade?market=${p.marketId}`); }
+                }}
+                role="button"
+                tabIndex={0}
                 className="mkt-card"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
               >
@@ -207,7 +225,7 @@ export default function PortfolioPage() {
                     Close
                   </button>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
