@@ -8,7 +8,9 @@ import type { MarketCategory } from "shared/types";
 // then hold the white-background versions and will NEVER re-fetch the same URL, no matter what
 // the server now sends. Bumping this changes the URL, which abandons the old cache entry.
 // Increment whenever the image FILES change in place.
-const IMG_VERSION = 6;
+// Exported: the share card loads the same files and must use the same URL, or it fetches a
+// separate cache entry and can render a different (older) image than the thumbnail beside it.
+export const IMG_VERSION = 6;
 
 /**
  * Keyed by category, not market id. The old per-market map was 90% redundant — every aj1-*

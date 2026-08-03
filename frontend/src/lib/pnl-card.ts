@@ -47,6 +47,15 @@ export interface PnlCardData {
   settled: boolean;
   showAmounts: boolean;
   palette: { bezel: string; dial: string; fg: string };
+  /**
+   * The market's real background-removed art, already decoded. Optional: markets without a file
+   * fall back to the generated dial, exactly as the app's thumbnails do.
+   *
+   * Handed in already-loaded rather than fetched here, so this module stays synchronous and
+   * import-free. It must be same-origin — a cross-origin image taints the canvas and makes
+   * toBlob throw, which would break the export with no visible symptom until someone clicks save.
+   */
+  watchImage?: CanvasImageSource | null;
 }
 
 export function drawPnlCard(ctx: CanvasRenderingContext2D, d: PnlCardData): void {
@@ -153,7 +162,10 @@ export function drawPnlCard(ctx: CanvasRenderingContext2D, d: PnlCardData): void
     x += Math.max(ctx.measureText(value).width, 130) + 56;
   }
 
-  drawDial(ctx, CARD_W - 250, 300, 130, d.palette);
+  // Sized against the empty right-hand column, not against the dial it replaced. The watch shots
+  // are portrait (case plus bracelet), so a square bounding box spends most of its width on
+  // nothing and the watch comes out far smaller than the space allows.
+  drawArt(ctx, CARD_W - 250, 322, 185, d);
 
   // ── footer: the disclosure ──
   ctx.fillStyle = "#00000066";
@@ -213,8 +225,59 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 /**
- * The same generated dial the app renders, in canvas primitives. Decorative and brand-free by
- * design — no logos, no photography — matching the platform's legal posture.
+ * Real photography when the market has it, the generated dial when it does not — the same
+ * precedence the app's thumbnails use, so the card never shows a placeholder for a market that
+ * has real art.
+ *
+ * `r` is a bounding RADIUS, not a width: the photo is fitted inside a 2r box with its aspect
+ * ratio preserved, so a tall watch-on-strap shot and a square case shot both land at the same
+ * visual weight instead of one being stretched.
+ */
+function drawArt(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  d: PnlCardData,
+): void {
+  const img = d.watchImage;
+  const iw = img ? (img as HTMLImageElement).width : 0;
+  const ih = img ? (img as HTMLImageElement).height : 0;
+
+  // A zero-dimension image means it never actually decoded. Falling through to the dial beats
+  // drawing nothing and shipping a card with an empty hole in it.
+  if (!img || !iw || !ih) {
+    drawDial(ctx, cx, cy, r * 0.87, d.palette);
+    return;
+  }
+
+  // Tinted halo in the market's own colour, so the photo sits in the composition rather than
+  // floating on top of it.
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 1.5);
+  halo.addColorStop(0, `${d.palette.bezel}3a`);
+  halo.addColorStop(1, "#00000000");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  const scale = Math.min((r * 2) / iw, (r * 2) / ih);
+  const w = iw * scale;
+  const h = ih * scale;
+
+  ctx.save();
+  // The art is background-removed with a transparent alpha, so a shadow reads as the watch's own
+  // rather than a rectangle behind it.
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 36;
+  ctx.shadowOffsetY = 14;
+  ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+  ctx.restore();
+}
+
+/**
+ * The generated dial, in canvas primitives — the fallback for any market with no photograph.
+ * Decorative and brand-free by design: no logos, no wordmarks.
  */
 function drawDial(
   ctx: CanvasRenderingContext2D,

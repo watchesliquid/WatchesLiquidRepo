@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getMarketById } from "shared/markets";
-import { watchPalette } from "./WatchImage";
+import { watchPalette, IMG_VERSION as WATCH_IMG_VERSION } from "./WatchImage";
 import { drawPnlCard, CARD_W, CARD_H, CARD_SCALE } from "@/lib/pnl-card";
 
 /** The UI still brands itself watchperps while the domain is separate. One place to change it. */
@@ -51,8 +51,28 @@ export function SharePnlCard({ position, displayName, onClose }: Props) {
   const [showAmounts, setShowAmounts] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
 
+  const [art, setArt] = useState<HTMLImageElement | null>(null);
+
   const roe = position.collateral > 0 ? (position.pnl / position.collateral) * 100 : 0;
   const market = getMarketById(position.marketId);
+
+  /**
+   * Load the market's real art before drawing. Same path and cache-buster as WatchImage, so the
+   * card shows the same watch the rest of the app does.
+   *
+   * Same-origin, and deliberately NOT crossOrigin: these are served from our own /public, and a
+   * tainted canvas makes toBlob throw — the export would break with no visible symptom until a
+   * user clicked save. A missing or broken file just leaves `art` null and the generated dial
+   * takes over, which is the same fallback the thumbnails use.
+   */
+  useEffect(() => {
+    let live = true;
+    const img = new Image();
+    img.onload = () => { if (live) setArt(img); };
+    img.onerror = () => { if (live) setArt(null); };
+    img.src = `/images/watches/${position.marketId}.webp?v=${WATCH_IMG_VERSION}`;
+    return () => { live = false; };
+  }, [position.marketId]);
 
   useEffect(() => {
     const ctx = canvasRef.current?.getContext("2d");
@@ -72,8 +92,9 @@ export function SharePnlCard({ position, displayName, onClose }: Props) {
       settled: position.settled,
       showAmounts,
       palette: watchPalette(position.marketId),
+      watchImage: art,
     });
-  }, [position, displayName, showAmounts, roe, market]);
+  }, [position, displayName, showAmounts, roe, market, art]);
 
   // Esc closes, matching every other dismissable surface in the app.
   useEffect(() => {
