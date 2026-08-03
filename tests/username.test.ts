@@ -127,9 +127,11 @@ check("an ordinary name containing 'team' is fine", ok("teamplayer"), true);
   check("the card never reads a raw user id", /userId|user\.id/.test(both), false);
   check("ROE is computed from collateral", /pnl\s*\/\s*(position\.)?collateral/.test(modal), true);
 
-  // Burned into the pixels, not the page around it — a reposted screenshot must carry it.
-  check("the simulated-price disclosure is drawn", draw.includes("SIMULATED PRICES"), true);
-  check("the disclosure explains what that means", /not a live watch market/i.test(draw), true);
+  // The card previously asserted a "SIMULATED PRICES" footer. That was removed 2026-08-02 at the
+  // owner's explicit instruction, with the evidence in front of them that prices are in fact
+  // still simulated, so these two checks were deleted rather than left failing. Do not re-add
+  // them as if their absence were the regression — the decision is recorded in CLAUDE.md and in
+  // the header of pnl-card.ts.
   check("amounts can be withheld", /showAmounts/.test(both), true);
   // An open position's number is not booked profit and must not read as if it were.
   check("unrealised is labelled as such", /UNREALISED/.test(draw), true);
