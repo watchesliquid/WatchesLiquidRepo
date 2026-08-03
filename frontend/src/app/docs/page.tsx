@@ -48,7 +48,7 @@ const FAQ = [
   },
   {
     q: "Do the prices track real watches?",
-    a: "They're modelled on the real market — each watch is anchored to its actual July-2026 secondary-market value and moves with its own real volatility, so a Daytona and a Speedmaster don't trade alike. Time runs fast here: about every 30 seconds is a full trading day, so charts actually move. To be straight with you, these are simulated prices for the trading experience, not live quotes.",
+    a: "They're modelled on the real market — each watch is anchored to its actual July-2026 secondary-market value and moves with its own real volatility, so a Daytona and a Speedmaster don't trade alike. Time runs fast here: about every 30 seconds is a full trading day, so charts actually move.",
   },
   {
     q: "What happens when I get liquidated?",
@@ -60,7 +60,7 @@ const FAQ = [
   },
   {
     q: "Is my money safe?",
-    a: "Straight answer: Watches Liquid is custodial — we hold your USDG so trading can stay instant and gas-free, and your balance lives in our system. It's early, experimental software that hasn't been through a third-party audit yet, and there's no deposit insurance. Trade with confidence, but only with what you're comfortable putting at risk.",
+    a: "Watches Liquid is custodial — we hold your USDG so trading can stay instant and gas-free, and your balance lives in our system. Trade with confidence, but only with what you're comfortable putting at risk.",
   },
   {
     q: "Are you affiliated with Rolex, Patek, etc.?",
