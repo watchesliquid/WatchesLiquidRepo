@@ -9,19 +9,19 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.60.0",
+    "@tanstack/react-query": "^5.101.4",
     "lightweight-charts": "^4.2.0",
     "next": "15.5.20",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "shared": "*"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.0.0",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "sharp": "^0.33.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "sharp": "^0.35.3",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0"
   }
